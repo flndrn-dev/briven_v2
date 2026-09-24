@@ -1,9 +1,9 @@
 //!
-//! `neon_local` is an executable that can be used to create a local
-//! Neon environment, for testing purposes. The local environment is
-//! quite different from the cloud environment with Kubernetes, but it
-//! easier to work with locally. The python tests in `test_runner`
-//! rely on `neon_local` to set up the environment for each test.
+//! `briven_local` is the Briven-facing executable for creating a local engine
+//! environment for development and testing. The local environment is different
+//! from the cloud environment with Kubernetes, but it is easier to work with locally.
+//! Some inherited test tooling still calls the compatibility binary while Briven-facing
+//! workflows move to `briven_local`.
 //!
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -71,9 +71,9 @@ const DEFAULT_PG_VERSION_NUM: &str = "17";
 
 const DEFAULT_PAGESERVER_CONTROL_PLANE_API: &str = "http://127.0.0.1:1234/upcall/v1/";
 
-/// Neon CLI.
+/// Briven local engine CLI.
 #[derive(clap::Parser)]
-#[command(version = GIT_VERSION, name = "Neon CLI")]
+#[command(version = GIT_VERSION, name = "Briven Local CLI", bin_name = "briven_local")]
 struct Cli {
     #[command(subcommand)]
     command: NeonLocalCmd,
@@ -108,7 +108,7 @@ enum NeonLocalCmd {
     Stop(StopCmdArgs),
 }
 
-/// Initialize a new Neon repository, preparing configs for services to start with.
+/// Initialize a new Briven local repository, preparing configs for services to start with.
 #[derive(clap::Args)]
 struct InitCmdArgs {
     /// How many pageservers to create (default 1).
@@ -577,7 +577,7 @@ struct EndpointCreateCmdArgs {
     /// If set, the node will be a hot replica on the specified timeline.
     #[clap(long, action = clap::ArgAction::Set, default_value_t = false)]
     hot_standby: bool,
-    /// If set, will set up the catalog for neon_superuser.
+    /// If set, will set up the catalog for the engine superuser.
     #[clap(long)]
     update_catalog: bool,
     /// Allow multiple primary endpoints running on the same branch. Shouldn't be used normally, but
@@ -608,7 +608,7 @@ struct EndpointStartCmdArgs {
     /// Configure the remote extensions storage proxy gateway URL to request for extensions.
     #[clap(long, alias = "remote-ext-config")]
     remote_ext_base_url: Option<String>,
-    /// If set, will create test user `user` and `neondb` database. Requires `update-catalog = true`
+    /// If set, will create test user `test` and `brivendb` database. Requires `update-catalog = true`
     #[clap(long)]
     create_test_user: bool,
     /// Allow multiple primary endpoints running on the same branch. Shouldn't be used normally, but
@@ -691,7 +691,7 @@ struct EndpointGenerateJwtCmdArgs {
     scope: Option<ComputeClaimsScope>,
 }
 
-/// Manage neon_local branch name mappings.
+/// Manage Briven local branch name mappings.
 #[derive(clap::Subcommand)]
 enum MappingsCmd {
     Map(MappingsMapCmdArgs),
@@ -723,7 +723,7 @@ struct TimelineTreeEl {
     pub children: BTreeSet<TimelineId>,
 }
 
-/// A flock-based guard over the neon_local repository directory
+/// A flock-based guard over the Briven local repository directory.
 struct RepoLock {
     _file: Flock<File>,
 }
@@ -738,7 +738,7 @@ impl RepoLock {
     }
 }
 
-// Main entry point for the 'neon_local' CLI utility
+// Main entry point for the Briven local CLI utility.
 //
 // This utility helps to manage neon installation. That includes following:
 //   * Management of local postgres installations running on top of the
@@ -1014,7 +1014,7 @@ fn handle_init(args: &InitCmdArgs) -> anyhow::Result<LocalEnv> {
     };
 
     LocalEnv::init(init_conf, &args.force)
-        .context("materialize initial neon_local environment on disk")?;
+        .context("materialize initial Briven local environment on disk")?;
     Ok(LocalEnv::load_config(&local_env::base_path())
         .expect("freshly written config should be loadable"))
 }
@@ -2005,7 +2005,7 @@ async fn neon_start_status_check(
 
     for retry in 0..retries {
         if retry == notice_after_retries {
-            println!("\nNeon status check has not passed yet, continuing to wait")
+            println!("\nBriven status check has not passed yet, continuing to wait")
         }
 
         let mut passed = true;
@@ -2033,14 +2033,14 @@ async fn neon_start_status_check(
         }
 
         if passed {
-            println!("\nNeon started and passed status check");
+            println!("\nBriven started and passed status check");
             return Ok(());
         }
 
         tokio::time::sleep(RETRY_INTERVAL).await;
     }
 
-    anyhow::bail!("\nNeon passed status check")
+    anyhow::bail!("\nBriven passed status check")
 }
 
 async fn handle_stop_all(args: &StopCmdArgs, env: &local_env::LocalEnv) -> Result<()> {

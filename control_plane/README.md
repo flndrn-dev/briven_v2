@@ -1,7 +1,7 @@
-# Local Development Control Plane (`neon_local`)
+# Local Development Control Plane (`briven_local`)
 
-This crate contains tools to start a Briven/Neon-derived development environment locally. This utility can be used with the `cargo neon` command.  This is a convenience to invoke
-the `neon_local` binary.
+This crate contains tools to start a Briven development environment locally.
+Use the `briven_local` binary for Briven-facing workflows.
 
 **Note**: this is a dev/test tool -- a minimal control plane suitable for testing
 code changes locally, but not suitable for running production systems.
@@ -11,20 +11,20 @@ code changes locally, but not suitable for running production systems.
 To create and start a local development environment with Postgres 16, you will need to provide `--pg-version` flag to 2 of the start-up commands.
 
 ```shell
-cargo neon init
-cargo neon start
-cargo neon tenant create --set-default --pg-version 16
-cargo neon endpoint create main --pg-version 16
-cargo neon endpoint start main
+./target/debug/briven_local init
+./target/debug/briven_local start
+./target/debug/briven_local tenant create --set-default --pg-version 16
+./target/debug/briven_local endpoint create main --pg-version 16
+./target/debug/briven_local endpoint start main
 ```
 
 ## Example: Create Test User and Database
 
-By default, `cargo neon` starts an endpoint with `cloud_admin` and `postgres` database. If you want to have a role and a database similar to what we have on the cloud service, you can do it with the following commands when starting an endpoint.
+By default, `briven_local` starts an endpoint with `cloud_admin` and `postgres` database. If you want to have a role and a database similar to what we have on the cloud service, you can do it with the following commands when starting an endpoint.
 
 ```shell
-cargo neon endpoint create main --pg-version 16 --update-catalog true
-cargo neon endpoint start main --create-test-user true
+./target/debug/briven_local endpoint create main --pg-version 16 --update-catalog true
+./target/debug/briven_local endpoint start main --create-test-user true
 ```
 
-The first command creates the inherited `neon_superuser` role and necessary roles. The second command creates `test` user and `neondb` database. These names are engine internals today; Briven-facing names will be layered on top in the product control API. You will see a connection string that connects you to the test user after running the second command.
+The first command creates the engine superuser role and necessary roles. The second command creates `test` user and `brivendb` database. You will see a connection string that connects you to the test user after running the second command.

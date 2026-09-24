@@ -482,7 +482,7 @@ async fn request_handler(
             .header("Access-Control-Allow-Origin", "*")
             .header(
                 "Access-Control-Allow-Headers",
-                "Authorization, Neon-Connection-String, Neon-Raw-Text-Output, Neon-Array-Mode, Neon-Pool-Opt-In, Neon-Batch-Read-Only, Neon-Batch-Isolation-Level",
+                "Authorization, Briven-Connection-String, Briven-Raw-Text-Output, Briven-Array-Mode, Briven-Pool-Opt-In, Briven-Batch-Read-Only, Briven-Batch-Isolation-Level",
             )
             .header("Access-Control-Max-Age", "86400" /* 24 hours */)
             .status(StatusCode::OK) // 204 is also valid, but see: https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/OPTIONS#status_code

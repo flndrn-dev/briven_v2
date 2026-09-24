@@ -2,11 +2,11 @@
 
 Briven v2 is the clean database engine foundation for `briven.tech`.
 
-This repository is derived from the open-source Neon architecture. Briven keeps Neon available as a maintainer upstream while presenting the public project as Briven:
+This repository presents the public project as Briven. Normal Briven work uses the
+Briven repository as the source of truth:
 
 ```text
 origin   https://github.com/flndrn-dev/briven_v2.git
-upstream https://github.com/neondatabase/neon.git
 ```
 
 ## What To Rename
@@ -17,17 +17,19 @@ Safe early branding work:
 - Briven logo, icon, and favicon.
 - Product language in website/dashboard surfaces.
 - Docker image tags and deployment labels once build/test coverage exists for the change.
+- Briven-facing local command wrappers where they do not break inherited engine tooling.
 
 Do not blindly rename:
 
-- Rust crate names.
-- Binary names.
+- Rust crate names that are referenced by many internal build targets.
+- Internal compatibility binary names.
 - Internal module names.
 - Test fixture names.
 - Protocol names.
-- Paths that upstream Neon tooling expects.
+- Paths that inherited engine tooling expects.
 
-Those names can be changed later only with focused tests and a clear reason.
+Those names should be changed behind Briven-facing aliases first, then migrated with focused
+tests when the engine layer is stable.
 
 ## Product Target
 
@@ -51,15 +53,15 @@ make -j$(sysctl -n hw.logicalcpu) -s
 Run locally:
 
 ```bash
-./target/debug/neon_local init
-./target/debug/neon_local start
-./target/debug/neon_local tenant create --set-default
-./target/debug/neon_local endpoint create main
-./target/debug/neon_local endpoint start main
+./target/debug/briven_local init
+./target/debug/briven_local start
+./target/debug/briven_local tenant create --set-default
+./target/debug/briven_local endpoint create main
+./target/debug/briven_local endpoint start main
 ```
 
 Stop locally:
 
 ```bash
-./target/debug/neon_local stop
+./target/debug/briven_local stop
 ```

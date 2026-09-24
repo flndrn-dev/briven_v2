@@ -38,7 +38,7 @@ impl Scram<'_> {
 }
 
 /// Use an ad hoc auth flow (for clients which don't support SNI) proposed in
-/// <https://github.com/neondatabase/cloud/issues/1620#issuecomment-1165332290>.
+/// Briven TODO: replace this compatibility path with a clean password handling design.
 pub(crate) struct PasswordHack;
 
 /// Use clear-text password auth called `password` in docs

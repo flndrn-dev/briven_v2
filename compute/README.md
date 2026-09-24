@@ -12,10 +12,9 @@ etc/
 	Configuration files included in /etc in the compute image
 
 patches/
-	Some extensions need to be patched to work with the Briven/Neon-derived engine. This
+	Some extensions need to be patched to work with the Briven engine. This
 	directory contains such patches. They are applied to the extension
 	sources in compute-node.Dockerfile
 
-In addition to these, postgres itself, the inherited neon postgres extension,
-and compute_ctl are built and copied into the compute image by
-compute-node.Dockerfile.
+In addition to these, Postgres, the Briven storage extension compatibility layer,
+and compute_ctl are built and copied into the compute image by compute-node.Dockerfile.

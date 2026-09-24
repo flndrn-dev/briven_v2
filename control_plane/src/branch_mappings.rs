@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use utils::id::{TenantId, TenantTimelineId, TimelineId};
@@ -13,7 +13,7 @@ use utils::id::{TenantId, TenantTimelineId, TimelineId};
 #[derive(PartialEq, Eq, Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BranchMappings {
-    /// Default tenant ID to use with the 'neon_local' command line utility, when
+    /// Default tenant ID to use with the Briven local command line utility, when
     /// --tenant_id is not explicitly specified. This comes from the branches.
     pub default_tenant_id: Option<TenantId>,
 
@@ -40,7 +40,9 @@ impl BranchMappings {
             if old_timeline_id == &timeline_id {
                 Ok(())
             } else {
-                bail!("branch '{branch_name}' is already mapped to timeline {old_timeline_id}, cannot map to another timeline {timeline_id}");
+                bail!(
+                    "branch '{branch_name}' is already mapped to timeline {old_timeline_id}, cannot map to another timeline {timeline_id}"
+                );
             }
         } else {
             existing_values.push((tenant_id, timeline_id));

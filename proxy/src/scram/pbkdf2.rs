@@ -29,7 +29,7 @@ impl Drop for Pbkdf2 {
     }
 }
 
-// inspired from <https://github.com/neondatabase/rust-postgres/blob/20031d7a9ee1addeae6e0968e3899ae6bf01cee2/postgres-protocol/src/authentication/sasl.rs#L36-L61>
+// Inspired by the postgres-protocol SASL implementation.
 impl Pbkdf2 {
     pub(crate) fn start(pw: &[u8], salt: &[u8], iterations: u32) -> Self {
         // key the HMAC and derive the first block in-place

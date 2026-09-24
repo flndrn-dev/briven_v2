@@ -16,14 +16,12 @@ Also proxy can expose following services to the external world:
 * postgres protocol over WebSockets -- same protocol tunneled over websockets
   for environments where TCP connection is not available. We have our own
   implementation of a client that uses node-postgres and tunnels traffic through
-  websockets: https://github.com/neondatabase/serverless
+  websockets.
 * SQL over HTTP -- service that accepts POST requests with SQL text over HTTP
   and responds with JSON-serialised results.
 
-Compatibility note: this proxy is inherited from Neon. Some local examples still use
-`local.neon.build` DNS names and `Neon-*` protocol headers because those names are
-currently implemented in the proxy code. Briven-facing aliases should be added in a
-focused proxy compatibility pass, with tests, rather than by editing examples first.
+Briven-facing HTTP headers are the primary interface. Legacy header aliases remain
+accepted for compatibility while the engine layer is migrated.
 
 ## SQL over HTTP
 
@@ -41,8 +39,8 @@ LOGFMT=text ./target/debug/proxy -c server.crt -k server.key --auth-backend=post
 
 If both postgres and proxy are running you may send a SQL query:
 ```console
-curl -k -X POST 'https://proxy.local.neon.build:4444/sql' \
-  -H 'Neon-Connection-String: postgres://stas:pass@proxy.local.neon.build:4444/postgres' \
+curl -k -X POST 'https://proxy.local.briven.tech:4444/sql' \
+  -H 'Briven-Connection-String: postgres://stas:pass@proxy.local.briven.tech:4444/postgres' \
   -H 'Content-Type: application/json' \
   --data '{
     "query":"SELECT $1::int[] as arr, $2::jsonb as obj, 42 as num",
@@ -102,13 +100,13 @@ With the current approach we made the following design decisions:
 
 User can pass several optional headers that will affect resulting json.
 
-1. `Neon-Raw-Text-Output: true`. Return postgres values as text, without parsing them. So numbers, objects, booleans, nulls and arrays will be returned as text. That can be useful in cases when client code wants to implement it's own parsing or reuse parsing libraries from e.g. node-postgres.
-2. `Neon-Array-Mode: true`. Return postgres rows as arrays instead of objects. That is more compact representation and also helps in some edge
+1. `Briven-Raw-Text-Output: true`. Return postgres values as text, without parsing them. So numbers, objects, booleans, nulls and arrays will be returned as text. That can be useful in cases when client code wants to implement its own parsing or reuse parsing libraries from e.g. node-postgres.
+2. `Briven-Array-Mode: true`. Return postgres rows as arrays instead of objects. That is more compact representation and also helps in some edge
 cases where it is hard to use rows represented as objects (e.g. when several fields have the same name).
 
 ## Test proxy locally
 
-Proxy determines project name from the subdomain, request to the `round-rice-566201.somedomain.tld` will be routed to the project named `round-rice-566201`. Unfortunately, `/etc/hosts` does not support domain wildcards, so we can use *.local.neon.build` which resolves to `127.0.0.1`.
+Proxy determines project name from the subdomain, request to the `round-rice-566201.somedomain.tld` will be routed to the project named `round-rice-566201`. Unfortunately, `/etc/hosts` does not support domain wildcards, so use `*.local.briven.tech` locally and point it at `127.0.0.1`.
 
 We will need to have a postgres instance. Assuming that we have set up docker we can set it up as follows:
 ```sh
@@ -122,8 +120,8 @@ docker run \
 
 Next step is setting up auth table and schema as well as creating role (without the JWT table):
 ```sh
-docker exec -it proxy-postgres psql -U postgres -c "CREATE SCHEMA IF NOT EXISTS neon_control_plane"
-docker exec -it proxy-postgres psql -U postgres -c "CREATE TABLE neon_control_plane.endpoints (endpoint_id VARCHAR(255) PRIMARY KEY, allowed_ips VARCHAR(255))"
+docker exec -it proxy-postgres psql -U postgres -c "CREATE SCHEMA IF NOT EXISTS briven_control_plane"
+docker exec -it proxy-postgres psql -U postgres -c "CREATE TABLE briven_control_plane.endpoints (endpoint_id VARCHAR(255) PRIMARY KEY, allowed_ips VARCHAR(255))"
 docker exec -it proxy-postgres psql -U postgres -c "CREATE ROLE proxy WITH SUPERUSER LOGIN PASSWORD 'password';"
 ```
 
@@ -134,7 +132,7 @@ docker run --detach --name proxy-redis --publish 6379:6379 redis:7.0
 
 Let's create self-signed certificate by running:
 ```sh
-openssl req -new -x509 -days 365 -nodes -text -out server.crt -keyout server.key -subj "/CN=*.local.neon.build"
+openssl req -new -x509 -days 365 -nodes -text -out server.crt -keyout server.key -subj "/CN=*.local.briven.tech"
 ```
 
 Then we need to build proxy with 'testing' feature and run, e.g.:
@@ -148,7 +146,7 @@ RUST_LOG=proxy LOGFMT=text cargo run -p proxy --bin proxy --features testing -- 
 Now from client you can start a new session:
 
 ```sh
-PGSSLROOTCERT=./server.crt psql  "postgresql://proxy:password@endpoint.local.neon.build:4432/postgres?sslmode=verify-full"
+PGSSLROOTCERT=./server.crt psql  "postgresql://proxy:password@endpoint.local.briven.tech:4432/postgres?sslmode=verify-full"
 ```
 
 ## auth broker setup:
@@ -192,7 +190,7 @@ Start the auth/rest broker:
 Note: to enable the rest broker you need to replace the stub subzero-core crate with the real one.
 
 ```sh
-cargo add -p proxy subzero-core --git https://github.com/neondatabase/subzero --rev 396264617e78e8be428682f87469bb25429af88a
+cargo add -p proxy subzero-core --git https://github.com/brivendatabase/subzero --rev 396264617e78e8be428682f87469bb25429af88a
 ```
 
 ```sh
@@ -205,21 +203,21 @@ LOGFMT=text OTEL_SDK_DISABLED=true cargo run --bin proxy --features testing,rest
   --auth-backend local
 ```
 
-Create a JWT in your auth provider (e.g. Clerk) and set it in the `NEON_JWT` environment variable.
+Create a JWT in your auth provider (e.g. Clerk) and set it in the `BRIVEN_JWT` environment variable.
 ```sh
-export NEON_JWT="..."
+export BRIVEN_JWT="..."
 ```
 
 Run a query against the auth broker:
 ```sh
-curl -k "https://foo.local.neon.build:8080/sql" \
-  -H "Authorization: Bearer $NEON_JWT" \
-  -H "neon-connection-string: postgresql://authenticator@foo.local.neon.build/database" \
+curl -k "https://foo.local.briven.tech:8080/sql" \
+  -H "Authorization: Bearer $BRIVEN_JWT" \
+  -H "Briven-Connection-String: postgresql://authenticator@foo.local.briven.tech/database" \
   -d '{"query":"select 1","params":[]}'
 ```
 
 Make a rest request against the auth broker (rest broker):
 ```sh
-curl -k "https://foo.local.neon.build:8080/database/rest/v1/items?select=id,name&id=eq.1" \
--H "Authorization: Bearer $NEON_JWT"
+curl -k "https://foo.local.briven.tech:8080/database/rest/v1/items?select=id,name&id=eq.1" \
+-H "Authorization: Bearer $BRIVEN_JWT"
 ```

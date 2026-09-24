@@ -3,7 +3,7 @@
 //! In the local test environment, the data for each pageserver is stored in
 //!
 //! ```text
-//!   .neon/pageserver_<pageserver_id>
+//!   .briven/pageserver_<pageserver_id>
 //! ```
 //!
 use std::collections::HashMap;
@@ -30,7 +30,7 @@ use utils::lsn::Lsn;
 use crate::background_process;
 use crate::local_env::{LocalEnv, NeonLocalInitPageserverConf, PageServerConf};
 
-/// Directory within .neon which will be used by default for LocalFs remote storage.
+/// Directory within .briven which will be used by default for LocalFs remote storage.
 pub const PAGESERVER_REMOTE_STORAGE_DIR: &str = "local_fs_remote_storage/pageserver";
 
 //
@@ -95,7 +95,7 @@ impl PageServerNode {
         assert_eq!(
             &PageServerConf::from(&conf),
             &self.conf,
-            "during neon_local init, we derive the runtime state of ps conf (self.conf) from the --config flag fully"
+            "during briven_local init, we derive the runtime state of ps conf (self.conf) from the --config flag fully"
         );
 
         // TODO(christian): instead of what we do here, create a pageserver_api::config::ConfigToml (PR #7656)

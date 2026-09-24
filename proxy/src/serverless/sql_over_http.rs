@@ -27,8 +27,11 @@ use super::conn_pool::AuthData;
 use super::conn_pool_lib::{self, ConnInfo};
 use super::error::{ConnInfoError, HttpCodeError, ReadPayloadError};
 use super::http_util::{
-    ALLOW_POOL, ARRAY_MODE, CONN_STRING, NEON_REQUEST_ID, RAW_TEXT_OUTPUT, TXN_DEFERRABLE,
-    TXN_ISOLATION_LEVEL, TXN_READ_ONLY, get_conn_info, json_response, uuid_to_header_value,
+    ALLOW_POOL, ARRAY_MODE, CONN_STRING, NEON_ALLOW_POOL_COMPAT, NEON_ARRAY_MODE_COMPAT,
+    NEON_CONN_STRING_COMPAT, NEON_RAW_TEXT_OUTPUT_COMPAT, NEON_REQUEST_ID,
+    NEON_TXN_DEFERRABLE_COMPAT, NEON_TXN_ISOLATION_LEVEL_COMPAT, NEON_TXN_READ_ONLY_COMPAT,
+    RAW_TEXT_OUTPUT, TXN_DEFERRABLE, TXN_ISOLATION_LEVEL, TXN_READ_ONLY, get_conn_info,
+    header_value, json_response, uuid_to_header_value,
 };
 use super::json::{JsonConversionError, json_to_pg_text, pg_text_row_to_json};
 use crate::auth::backend::ComputeCredentialKeys;
@@ -368,19 +371,27 @@ impl HttpHeaders {
     fn try_parse(headers: &hyper::http::HeaderMap) -> Result<Self, SqlOverHttpError> {
         // Determine the output options. Default behaviour is 'false'. Anything that is not
         // strictly 'true' assumed to be false.
-        let raw_output = headers.get(&RAW_TEXT_OUTPUT) == Some(&HEADER_VALUE_TRUE);
-        let default_array_mode = headers.get(&ARRAY_MODE) == Some(&HEADER_VALUE_TRUE);
+        let raw_output = header_value(headers, &RAW_TEXT_OUTPUT, &NEON_RAW_TEXT_OUTPUT_COMPAT)
+            == Some(&HEADER_VALUE_TRUE);
+        let default_array_mode =
+            header_value(headers, &ARRAY_MODE, &NEON_ARRAY_MODE_COMPAT) == Some(&HEADER_VALUE_TRUE);
 
         // isolation level, read only and deferrable
-        let txn_isolation_level = match headers.get(&TXN_ISOLATION_LEVEL) {
+        let txn_isolation_level = match header_value(
+            headers,
+            &TXN_ISOLATION_LEVEL,
+            &NEON_TXN_ISOLATION_LEVEL_COMPAT,
+        ) {
             Some(x) => Some(
                 map_header_to_isolation_level(x).ok_or(SqlOverHttpError::InvalidIsolationLevel)?,
             ),
             None => None,
         };
 
-        let txn_read_only = headers.get(&TXN_READ_ONLY) == Some(&HEADER_VALUE_TRUE);
-        let txn_deferrable = headers.get(&TXN_DEFERRABLE) == Some(&HEADER_VALUE_TRUE);
+        let txn_read_only = header_value(headers, &TXN_READ_ONLY, &NEON_TXN_READ_ONLY_COMPAT)
+            == Some(&HEADER_VALUE_TRUE);
+        let txn_deferrable = header_value(headers, &TXN_DEFERRABLE, &NEON_TXN_DEFERRABLE_COMPAT)
+            == Some(&HEADER_VALUE_TRUE);
 
         Ok(Self {
             raw_output,
@@ -470,7 +481,7 @@ async fn handle_db_inner(
     // Allow connection pooling only if explicitly requested
     // or if we have decided that http pool is no longer opt-in
     let allow_pool = !config.http_config.pool_options.opt_in
-        || headers.get(&ALLOW_POOL) == Some(&HEADER_VALUE_TRUE);
+        || header_value(headers, &ALLOW_POOL, &NEON_ALLOW_POOL_COMPAT) == Some(&HEADER_VALUE_TRUE);
 
     let parsed_headers = HttpHeaders::try_parse(headers)?;
 
@@ -616,11 +627,17 @@ async fn handle_db_inner(
 static HEADERS_TO_FORWARD: &[&HeaderName] = &[
     &AUTHORIZATION,
     &CONN_STRING,
+    &NEON_CONN_STRING_COMPAT,
     &RAW_TEXT_OUTPUT,
+    &NEON_RAW_TEXT_OUTPUT_COMPAT,
     &ARRAY_MODE,
+    &NEON_ARRAY_MODE_COMPAT,
     &TXN_ISOLATION_LEVEL,
+    &NEON_TXN_ISOLATION_LEVEL_COMPAT,
     &TXN_READ_ONLY,
+    &NEON_TXN_READ_ONLY_COMPAT,
     &TXN_DEFERRABLE,
+    &NEON_TXN_DEFERRABLE_COMPAT,
 ];
 
 async fn handle_auth_broker_inner(

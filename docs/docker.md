@@ -2,12 +2,12 @@
 
 ## Images
 
-Briven v2 uses the Neon-derived engine and builds two main image families:
+Briven v2 builds two main image families:
 
 - `ghcr.io/flndrn-dev/briven-engine` — image with pre-built `pageserver`, `safekeeper`, `storage_broker`, and `proxy` binaries plus runtime dependencies. Built from [/Dockerfile](/Dockerfile).
-- `ghcr.io/flndrn-dev/briven-compute-node-v16` — compute node image with pre-built Postgres binaries from the Neon-derived Postgres fork. Similar images exist for v17, v15, and v14. Built from [/compute-node/Dockerfile](/compute/compute-node.Dockerfile).
+- `ghcr.io/flndrn-dev/briven-compute-node-v16` — compute node image with pre-built Postgres binaries from the Briven Postgres fork. Similar images exist for v17, v15, and v14. Built from [/compute-node/Dockerfile](/compute/compute-node.Dockerfile).
 
-The upstream Neon image names are intentionally not removed from source code until Briven's own registry, release workflow, and compatibility tests are in place. Use Docker variables to point examples at upstream images when comparing against Neon.
+Use Docker variables to point examples at alternate image registries when running compatibility comparisons.
 
 ## Build pipeline
 

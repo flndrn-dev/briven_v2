@@ -3,7 +3,7 @@
 //! In the local test environment, the storage broker stores its data directly in
 //!
 //! ```text
-//!   .neon/storage_broker
+//!   .briven/storage_broker
 //! ```
 use std::time::Duration;
 

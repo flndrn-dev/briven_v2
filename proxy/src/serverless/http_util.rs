@@ -23,16 +23,37 @@ use crate::pqproto::StartupMessageParams;
 use crate::proxy::NeonOptions;
 use crate::types::{DbName, EndpointId, RoleName};
 
-// Common header names used across serverless modules
-pub(super) static NEON_REQUEST_ID: HeaderName = HeaderName::from_static("neon-request-id");
-pub(super) static CONN_STRING: HeaderName = HeaderName::from_static("neon-connection-string");
-pub(super) static RAW_TEXT_OUTPUT: HeaderName = HeaderName::from_static("neon-raw-text-output");
-pub(super) static ARRAY_MODE: HeaderName = HeaderName::from_static("neon-array-mode");
-pub(super) static ALLOW_POOL: HeaderName = HeaderName::from_static("neon-pool-opt-in");
+// Common Briven header names used across serverless modules.
+pub(super) static NEON_REQUEST_ID: HeaderName = HeaderName::from_static("briven-request-id");
+pub(super) static CONN_STRING: HeaderName = HeaderName::from_static("briven-connection-string");
+pub(super) static RAW_TEXT_OUTPUT: HeaderName = HeaderName::from_static("briven-raw-text-output");
+pub(super) static ARRAY_MODE: HeaderName = HeaderName::from_static("briven-array-mode");
+pub(super) static ALLOW_POOL: HeaderName = HeaderName::from_static("briven-pool-opt-in");
 pub(super) static TXN_ISOLATION_LEVEL: HeaderName =
+    HeaderName::from_static("briven-batch-isolation-level");
+pub(super) static TXN_READ_ONLY: HeaderName = HeaderName::from_static("briven-batch-read-only");
+pub(super) static TXN_DEFERRABLE: HeaderName = HeaderName::from_static("briven-batch-deferrable");
+
+pub(super) static NEON_CONN_STRING_COMPAT: HeaderName =
+    HeaderName::from_static("neon-connection-string");
+pub(super) static NEON_RAW_TEXT_OUTPUT_COMPAT: HeaderName =
+    HeaderName::from_static("neon-raw-text-output");
+pub(super) static NEON_ARRAY_MODE_COMPAT: HeaderName = HeaderName::from_static("neon-array-mode");
+pub(super) static NEON_ALLOW_POOL_COMPAT: HeaderName = HeaderName::from_static("neon-pool-opt-in");
+pub(super) static NEON_TXN_ISOLATION_LEVEL_COMPAT: HeaderName =
     HeaderName::from_static("neon-batch-isolation-level");
-pub(super) static TXN_READ_ONLY: HeaderName = HeaderName::from_static("neon-batch-read-only");
-pub(super) static TXN_DEFERRABLE: HeaderName = HeaderName::from_static("neon-batch-deferrable");
+pub(super) static NEON_TXN_READ_ONLY_COMPAT: HeaderName =
+    HeaderName::from_static("neon-batch-read-only");
+pub(super) static NEON_TXN_DEFERRABLE_COMPAT: HeaderName =
+    HeaderName::from_static("neon-batch-deferrable");
+
+pub(super) fn header_value<'a>(
+    headers: &'a HeaderMap,
+    primary: &HeaderName,
+    compatibility: &HeaderName,
+) -> Option<&'a HeaderValue> {
+    headers.get(primary).or_else(|| headers.get(compatibility))
+}
 
 pub(crate) fn uuid_to_header_value(id: Uuid) -> HeaderValue {
     let mut uuid = [0; uuid::fmt::Hyphenated::LENGTH];
@@ -148,8 +169,7 @@ pub(crate) fn get_conn_info(
     let connection_url = match connection_string {
         Some(connection_string) => Url::parse(connection_string)?,
         None => {
-            let connection_string = headers
-                .get(&CONN_STRING)
+            let connection_string = header_value(headers, &CONN_STRING, &NEON_CONN_STRING_COMPAT)
                 .ok_or(ConnInfoError::InvalidHeader(&CONN_STRING))?
                 .to_str()
                 .map_err(|_| ConnInfoError::InvalidHeader(&CONN_STRING))?;

@@ -1,7 +1,7 @@
-//! Spawns and kills background processes that are needed by Neon CLI.
+//! Spawns and kills background processes that are needed by the Briven local CLI.
 //! Applies common set-up such as log and pid files (if needed) to every process.
 //!
-//! Neon CLI does not run in background, so it needs to store the information about
+//! The Briven local CLI does not run in background, so it needs to store the information about
 //! spawned processes, which it does in this module.
 //! We do that by storing the pid of the process in the "${process_name}.pid" file.
 //! The pid file can be created by the process itself
@@ -137,7 +137,7 @@ where
         match process_started(pid, pid_file_to_check, &process_status_check).await {
             Ok(true) => {
                 println!("\n{process_name} started and passed status check, pid: {pid}");
-                // leak the child process, it'll outlive this neon_local invocation
+                // leak the child process, it'll outlive this Briven local invocation
                 drop(scopeguard::ScopeGuard::into_inner(spawned_process));
                 return Ok(());
             }

@@ -249,7 +249,7 @@ impl StorageController {
     ///
     /// This function is equivalent to the `diesel setup` command in the diesel CLI.  We implement
     /// the same steps by hand to avoid imposing a dependency on installing diesel-cli for developers
-    /// who just want to run `cargo neon_local` without knowing about diesel.
+    /// who just want to run `briven_local` without knowing about diesel.
     ///
     /// Returns the database url
     pub async fn setup_database(&self, postgres_port: u16) -> anyhow::Result<String> {
@@ -306,13 +306,13 @@ impl StorageController {
             .host("localhost")
             .port(postgres_port)
             // The user is the ambient operating system user name.
-            // That is an impurity which we want to fix in => TODO https://github.com/neondatabase/neon/issues/8400
+            // Briven TODO: remove this impurity when timeline placement ownership is clarified.
             //
             // Until we get there, use the ambient operating system user name.
             // Recent tokio-postgres versions default to this if the user isn't specified.
             // But tokio-postgres fork doesn't have this upstream commit:
             // https://github.com/sfackler/rust-postgres/commit/cb609be758f3fb5af537f04b584a2ee0cebd5e79
-            // => we should rebase our fork => TODO https://github.com/neondatabase/neon/issues/8399
+            // Briven TODO: revisit startup registration once placement migration is stable.
             .user(&username())
             .dbname(DB_NAME)
             .connect(tokio_postgres::NoTls)
@@ -430,7 +430,7 @@ impl StorageController {
             //   the storage controller we don't want a slow local disk to interfere with that.
             //
             // NB: it's important that we rewrite this file on each start command so we propagate changes
-            // from `LocalEnv`'s config file (`.neon/config`).
+            // from `LocalEnv`'s config file (`.briven/config`).
             tokio::fs::write(
                 &pg_data_path.join("postgresql.conf"),
                 format!("port = {postgres_port}\nfsync=off\n"),
@@ -640,7 +640,7 @@ impl StorageController {
             args.push("--timelines-onto-safekeepers".to_string());
         }
 
-        // neon_local is used in test environments where we often have less than 3 safekeepers.
+        // Briven local is used in test environments where we often have less than 3 safekeepers.
         if self.config.timeline_safekeeper_count.is_some() || self.env.safekeepers.len() < 3 {
             let sk_cnt = self
                 .config

@@ -1,6 +1,6 @@
 //! Payload for ad hoc authentication method for clients that don't support SNI.
 //! See the `impl` for [`super::backend::Backend<ClientCredentials>`].
-//! Read more: <https://github.com/neondatabase/cloud/issues/1620#issuecomment-1165332290>.
+//! Briven TODO: replace this compatibility path with a clean password handling design.
 //! UPDATE (Mon Aug  8 13:20:34 UTC 2022): the payload format has been simplified.
 
 use bstr::ByteSlice;

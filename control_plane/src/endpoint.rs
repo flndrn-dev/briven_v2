@@ -3,7 +3,7 @@
 //! In the local test environment, the data for each endpoint is stored in
 //!
 //! ```text
-//!   .neon/endpoints/<endpoint id>
+//!   .briven/endpoints/<endpoint id>
 //! ```
 //!
 //! Some basic information about the endpoint, like the tenant and timeline IDs,
@@ -25,7 +25,7 @@
 //! Directory contents:
 //!
 //! ```text
-//! .neon/endpoints/main/
+//! .briven/endpoints/main/
 //!     compute.log               - log output of `compute_ctl` and `postgres`
 //!     endpoint.json             - serialized `EndpointConf` struct
 //!     postgresql.conf           - postgresql settings
@@ -467,7 +467,7 @@ impl Endpoint {
         // Set to 1MB to both exercise getPage requests/LFC, and still have enough room for
         // Postgres to operate. Everything smaller might be not enough for Postgres under load,
         // and can cause errors like 'no unpinned buffers available', see
-        // <https://github.com/neondatabase/neon/issues/9956>
+        // Briven TODO: track whether this mode is still needed after endpoint startup is hardened.
         conf.append("shared_buffers", "1MB");
         // Postgres defaults to effective_io_concurrency=1, which does not exercise the pageserver's
         // batching logic.  Set this to 2 so that we exercise the code a bit without letting
@@ -564,7 +564,7 @@ impl Endpoint {
                 conf.append("primary_slot_name", slot_name.as_str());
                 conf.append("hot_standby", "on");
                 // prefetching of blocks referenced in WAL doesn't make sense for us
-                // Neon hot standby ignores pages that are not in the shared_buffers
+                // Briven hot standby ignores pages that are not in the shared_buffers
                 if self.pg_version >= PgMajorVersion::PG15 {
                     conf.append("recovery_prefetch", "off");
                 }
@@ -640,7 +640,7 @@ impl Endpoint {
     }
 
     fn wait_for_compute_ctl_to_exit(&self, send_sigterm: bool) -> Result<()> {
-        // TODO use background_process::stop_process instead: https://github.com/neondatabase/neon/pull/6482
+        // TODO: use background_process::stop_process instead.
         let pidfile_path = self.endpoint_path().join("compute_ctl.pid");
         let pid: u32 = std::fs::read_to_string(pidfile_path)?.parse()?;
         let pid = nix::unistd::Pid::from_raw(pid as i32);
@@ -789,7 +789,7 @@ impl Endpoint {
                     },
                     databases: if args.create_test_user {
                         vec![Database {
-                            name: PgIdent::from_str("neondb").unwrap(),
+                            name: PgIdent::from_str("brivendb").unwrap(),
                             owner: PgIdent::from_str("test").unwrap(),
                             options: None,
                             restrict_conn: false,
@@ -825,7 +825,7 @@ impl Endpoint {
                 endpoint_storage_token: Some(args.endpoint_storage_token),
                 autoprewarm: args.autoprewarm,
                 offload_lfc_interval_seconds: args.offload_lfc_interval_seconds,
-                suspend_timeout_seconds: -1, // Only used in neon_local.
+                suspend_timeout_seconds: -1, // Only used in Briven local.
                 databricks_settings: None,
             };
 
@@ -844,7 +844,7 @@ impl Endpoint {
                         options: None,
                     });
                     spec.cluster.databases.push(Database {
-                        name: PgIdent::from_str("neondb").unwrap(),
+                        name: PgIdent::from_str("brivendb").unwrap(),
                         owner: PgIdent::from_str("test").unwrap(),
                         options: None,
                         restrict_conn: false,
@@ -873,7 +873,7 @@ impl Endpoint {
         let conn_str = self.connstr("cloud_admin", "postgres");
         println!("Starting postgres node at '{conn_str}'");
         if args.create_test_user {
-            let conn_str = self.connstr("test", "neondb");
+            let conn_str = self.connstr("test", "brivendb");
             println!("Also at '{conn_str}'");
         }
         let mut cmd = Command::new(self.env.neon_distrib_dir.join("compute_ctl"));
@@ -931,7 +931,7 @@ impl Endpoint {
         });
 
         // Write down the pid so we can wait for it when we want to stop
-        // TODO use background_process::start_process instead: https://github.com/neondatabase/neon/pull/6482
+        // TODO: use background_process::start_process instead.
         let pid = child.id();
         let pidfile_path = self.endpoint_path().join("compute_ctl.pid");
         std::fs::write(pidfile_path, pid.to_string())?;
@@ -990,7 +990,7 @@ impl Endpoint {
             tokio::time::sleep(ATTEMPT_INTERVAL).await;
         }
 
-        // disarm the scopeguard, let the child outlive this function (and neon_local invoction)
+        // disarm the scopeguard, let the child outlive this function (and Briven local invocation)
         drop(scopeguard::ScopeGuard::into_inner(child));
 
         Ok(())

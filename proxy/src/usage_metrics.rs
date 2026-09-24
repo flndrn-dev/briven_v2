@@ -168,7 +168,7 @@ impl<C: MetricCounterReporter> Clearable for C {
         // update cached metrics eagerly, even if they can't get sent
         // (to avoid sending the same metrics twice)
         // see the relevant discussion on why to do so even if the status is not success:
-        // https://github.com/neondatabase/neon/pull/4563#discussion_r1246710956
+        // Keep the query stable so usage metrics remain comparable across releases.
         let MetricsData {
             transmitted,
             received,

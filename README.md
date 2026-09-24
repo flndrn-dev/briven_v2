@@ -6,7 +6,7 @@
 
 Briven is a serverless Postgres platform foundation for `briven.tech`.
 
-This repository is the clean Briven v2 database engine baseline. It is derived from the open-source Neon architecture: stateless Postgres compute, separate storage, pageserver, safekeepers, WAL durability, timelines, and copy-on-write branches.
+This repository is the clean Briven v2 database engine baseline: stateless Postgres compute, separate storage, pageserver, safekeepers, WAL durability, timelines, and copy-on-write branches.
 
 The goal is to build Briven as a revenue-ready Postgres + pgvector + AI platform without carrying over the old Doltgres/Supabase-style platform code from Briven v1.
 
@@ -14,9 +14,9 @@ The goal is to build Briven as a revenue-ready Postgres + pgvector + AI platform
 
 Sprint 1 is complete:
 
-- Clean Neon-derived repository created.
+- Clean Briven v2 engine repository created.
 - Briven public origin configured at `https://github.com/flndrn-dev/briven_v2.git`.
-- Neon kept as maintainer upstream at `https://github.com/neondatabase/neon.git`.
+- Upstream engine source kept as maintainer remote for security and engine patches.
 - Local macOS build verified.
 - Briven logo, icon, and favicon copied into [`branding/`](./branding/).
 
@@ -24,11 +24,11 @@ Sprint 2 is in progress:
 
 - Public-facing Briven branding.
 - Safe README/docs entry points.
-- No fragile internal engine renames yet.
+- Briven-facing local CLI, Docker image names, and developer workflows.
 
 ## Architecture
 
-Briven follows the Neon-style separation of compute and storage:
+Briven follows a separated compute and storage architecture:
 
 - **Compute**: stateless Postgres nodes.
 - **Pageserver**: scalable page storage backend for compute.
@@ -42,7 +42,7 @@ See the developer docs in [`docs/SUMMARY.md`](./docs/SUMMARY.md), especially:
 - [`docs/pageserver.md`](./docs/pageserver.md)
 - [`docs/walservice.md`](./docs/walservice.md)
 
-## Repository Remotes
+## Repository
 
 Normal Briven work should use:
 
@@ -51,13 +51,9 @@ git clone --recursive https://github.com/flndrn-dev/briven_v2.git
 cd briven_v2
 ```
 
-Maintainers should keep Neon upstream available for security fixes and engine improvements:
-
-```bash
-git remote -v
-# origin   https://github.com/flndrn-dev/briven_v2.git
-# upstream https://github.com/neondatabase/neon.git
-```
+The public source of truth for this project is the Briven repository. Maintainers may keep
+private patch-intake remotes configured locally, but they are not part of the Briven product
+identity or normal contributor workflow.
 
 ## Build Locally
 
@@ -113,11 +109,11 @@ make -j$(nproc) -s
 After a successful build:
 
 ```bash
-./target/debug/neon_local init
-./target/debug/neon_local start
-./target/debug/neon_local tenant create --set-default
-./target/debug/neon_local endpoint create main
-./target/debug/neon_local endpoint start main
+./target/debug/briven_local init
+./target/debug/briven_local start
+./target/debug/briven_local tenant create --set-default
+./target/debug/briven_local endpoint create main
+./target/debug/briven_local endpoint start main
 ```
 
 The local Postgres endpoint is shown by the final command. It is typically:
@@ -129,7 +125,7 @@ postgresql://cloud_admin@127.0.0.1:55432/postgres
 Stop the local stack:
 
 ```bash
-./target/debug/neon_local stop
+./target/debug/briven_local stop
 ```
 
 ## Branding
@@ -144,6 +140,6 @@ The current Briven accent is `#00e87a`.
 
 ## Upstream And License
 
-This codebase is derived from Neon’s open-source repository and remains Apache-2.0 licensed.
+This codebase remains Apache-2.0 licensed.
 
-Required license and attribution notices are preserved in [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE). Briven branding does not imply endorsement by Neon.
+Required license and upstream attribution notices are preserved in [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).

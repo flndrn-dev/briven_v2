@@ -6,7 +6,7 @@ This readme contains some hints on how to set up some optional development tools
 
 [ccls](https://github.com/MaskRay/ccls) is a c/c++ language server. It requires some setup
 to work well. There are different ways to do it but here's what works for me:
-1. Make a common parent directory for Briven/Neon-derived engine projects. For example, `~/src/briven/`.
+1. Make a common parent directory for Briven engine projects. For example, `~/src/briven/`.
 2. Go to `vendor/postgres-v15`
 3. Run `make clean && ./configure`
 4. Install [bear](https://github.com/rizsotto/Bear), and run `bear -- make -j4`

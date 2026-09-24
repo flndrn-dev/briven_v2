@@ -1,15 +1,19 @@
 # Briven v2 GitHub Workflows
 
-This repository is derived from Neon. Many workflow files and composite actions are still inherited from upstream and may refer to Neon-owned infrastructure, image registries, S3 buckets, or cloud APIs.
+This directory contains Briven repository automation. Some inherited engine-maintenance
+workflows still need replacement before they can run against Briven-owned infrastructure,
+registries, storage, and release credentials.
 
-For Sprint 2, Briven branding is applied to public repository entry points only:
+For Sprint 2, Briven branding is applied to the public contributor path:
 
 - Issue templates.
 - Pull request templates.
 - README/docs entry points.
 - Docker image naming targets.
 
-Do not blindly rename workflow internals yet. Several jobs depend on upstream Neon secrets, image names, benchmark labels, and action paths. Rebrand or replace those workflows only when Briven has its own:
+Workflow internals should be rebranded or replaced as Briven-owned infrastructure comes
+online. Several jobs depend on existing secrets, image names, benchmark labels, and action
+paths, so each workflow needs a focused migration with a testable replacement for:
 
 - Container registry packages.
 - CI secrets.
@@ -17,4 +21,5 @@ Do not blindly rename workflow internals yet. Several jobs depend on upstream Ne
 - Release process.
 - Build-tool images.
 
-Until then, inherited workflow names are treated as engine-maintenance internals.
+Until then, remaining compatibility workflow names are treated as engine-maintenance internals,
+not as Briven product identity.

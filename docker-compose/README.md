@@ -2,7 +2,7 @@
 
 The configuration in this directory is used for testing Briven engine Docker images. It is
 not intended for deploying a usable system. To run a development environment where
-you can experiment with a miniature Briven/Neon-derived system, use `./target/debug/neon_local`
+you can experiment with a miniature Briven system, use `./target/debug/briven_local`
 rather than container images.
 
 This configuration does not start the storage controller, because the controller
@@ -17,7 +17,8 @@ BRIVEN_COMPUTE_IMAGE=briven-compute-node-v${PG_VERSION}
 BRIVEN_TEST_EXTENSIONS_IMAGE=ghcr.io/flndrn-dev/briven-test-extensions-v${PG_VERSION}
 ```
 
-For upstream comparison, set those variables to the corresponding Neon image names.
+Compatibility image names can still be supplied by maintainers when comparing engine changes,
+but Briven image names are the default path.
 
 ## Generating the JWKS for a compute
 

@@ -31,10 +31,10 @@ use crate::safekeeper::SafekeeperNode;
 pub const DEFAULT_PG_VERSION: u32 = 17;
 
 //
-// This data structures represents neon_local CLI config
+// This data structure represents Briven local CLI config.
 //
-// It is deserialized from the .neon/config file, or the config file passed
-// to 'neon_local init --config=<path>' option. See control_plane/simple.conf for
+// It is deserialized from the .briven/config file, or the config file passed
+// to 'briven_local init --config=<path>' option. See control_plane/simple.conf for
 // an example.
 //
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -43,8 +43,9 @@ pub struct LocalEnv {
     // compute endpoints).
     //
     // This is not stored in the config file. Rather, this is the path where the
-    // config file itself is. It is read from the NEON_REPO_DIR env variable which
-    // must be an absolute path. If the env var is not set, $PWD/.neon is used.
+    // config file itself is. It is read from the BRIVEN_REPO_DIR env variable which
+    // must be an absolute path. NEON_REPO_DIR is still accepted as a compatibility
+    // fallback. If neither env var is set, $PWD/.briven is used.
     pub base_data_dir: PathBuf,
 
     // Path to postgres distribution. It's expected that "bin", "include",
@@ -56,7 +57,7 @@ pub struct LocalEnv {
     // Path to pageserver binary.
     pub neon_distrib_dir: PathBuf,
 
-    // Default tenant ID to use with the 'neon_local' command line utility, when
+    // Default tenant ID to use with the Briven local command line utility, when
     // --tenant_id is not explicitly specified.
     pub default_tenant_id: Option<TenantId>,
 
@@ -67,12 +68,12 @@ pub struct LocalEnv {
 
     pub broker: NeonBroker,
 
-    // Configuration for the storage controller (1 per neon_local environment)
+    // Configuration for the storage controller (1 per Briven local environment).
     pub storage_controller: NeonStorageControllerConf,
 
     /// This Vec must always contain at least one pageserver
-    /// Populdated by [`Self::load_config`] from the individual `pageserver.toml`s.
-    /// NB: not used anymore except for informing users that they need to change their `.neon/config`.
+    /// Populated by [`Self::load_config`] from the individual `pageserver.toml`s.
+    /// NB: not used anymore except for informing users that they need to change their `.briven/config`.
     pub pageservers: Vec<PageServerConf>,
 
     pub safekeepers: Vec<SafekeeperConf>,
@@ -98,7 +99,7 @@ pub struct LocalEnv {
     pub generate_local_ssl_certs: bool,
 }
 
-/// On-disk state stored in `.neon/config`.
+/// On-disk state stored in `.briven/config`.
 #[derive(PartialEq, Eq, Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OnDiskConfig {
@@ -132,11 +133,11 @@ where
 {
     Err(serde::de::Error::custom(
         "The 'pageservers' field is no longer used; pageserver.toml is now authoritative; \
-         Please remove the `pageservers` from your .neon/config.",
+         Please remove the `pageservers` from your .briven/config.",
     ))
 }
 
-/// The description of the neon_local env to be initialized by `neon_local init --config`.
+/// The description of the Briven local env to be initialized by `briven_local init --config`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NeonLocalInitConf {
@@ -170,11 +171,11 @@ pub struct NeonBroker {
     pub listen_addr: Option<SocketAddr>,
     /// Broker listen HTTPS address for storage nodes coordination, e.g. '127.0.0.1:50051'.
     /// At least one of listen_addr or listen_https_addr must be set.
-    /// listen_https_addr is preferred over listen_addr in neon_local.
+    /// listen_https_addr is preferred over listen_addr in Briven local.
     pub listen_https_addr: Option<SocketAddr>,
 }
 
-/// A part of storage controller's config the neon_local knows about.
+/// A part of storage controller's config the Briven local environment knows about.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
 #[serde(default)]
 pub struct NeonStorageControllerConf {
@@ -282,10 +283,10 @@ impl NeonBroker {
     }
 }
 
-// neon_local needs to know this subset of pageserver configuration.
-// For legacy reasons, this information is duplicated from `pageserver.toml` into `.neon/config`.
+// Briven local needs to know this subset of pageserver configuration.
+// For legacy reasons, this information is duplicated from `pageserver.toml` into `.briven/config`.
 // It can get stale if `pageserver.toml` is changed.
-// TODO(christian): don't store this at all in `.neon/config`, always load it from `pageserver.toml`
+// TODO(christian): don't store this at all in `.briven/config`, always load it from `pageserver.toml`
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct PageServerConf {
@@ -316,7 +317,7 @@ impl Default for PageServerConf {
     }
 }
 
-/// The toml that can be passed to `neon_local init --config`.
+/// The toml that can be passed to `briven_local init --config`.
 /// This is a subset of the `pageserver.toml` configuration.
 // TODO(christian): use pageserver_api::config::ConfigToml (PR #7656)
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -461,10 +462,10 @@ impl LocalEnv {
 
     pub fn storage_controller_bin(&self) -> PathBuf {
         // Irrespective of configuration, storage controller binary is always
-        // run from the same location as neon_local.  This means that for compatibility
+        // run from the same location as the Briven local CLI. This means that for compatibility
         // tests that run old pageserver/safekeeper, they still run latest storage controller.
-        let neon_local_bin_dir = env::current_exe().unwrap().parent().unwrap().to_owned();
-        neon_local_bin_dir.join("storage_controller")
+        let local_cli_bin_dir = env::current_exe().unwrap().parent().unwrap().to_owned();
+        local_cli_bin_dir.join("storage_controller")
     }
 
     pub fn safekeeper_bin(&self) -> PathBuf {
@@ -648,7 +649,7 @@ impl LocalEnv {
     pub fn load_config(repopath: &Path) -> anyhow::Result<Self> {
         if !repopath.exists() {
             bail!(
-                "Neon config is not found in {}. You need to run 'neon_local init' first",
+                "Briven config is not found in {}. You need to run 'briven_local init' first",
                 repopath.to_str().unwrap()
             );
         }
@@ -861,7 +862,7 @@ impl LocalEnv {
         Ok(pem)
     }
 
-    /// Materialize the [`NeonLocalInitConf`] to disk. Called during [`neon_local init`].
+    /// Materialize the [`NeonLocalInitConf`] to disk. Called during [`briven_local init`].
     pub fn init(conf: NeonLocalInitConf, force: &InitForceMode) -> anyhow::Result<()> {
         let base_path = base_path();
         assert_ne!(base_path, Path::new(""));
@@ -886,7 +887,7 @@ impl LocalEnv {
                     println!("removing all contents of '{}'", base_path.display());
                     // instead of directly calling `remove_dir_all`, we keep the original dir but removing
                     // all contents inside. This helps if the developer symbol links another directory (i.e.,
-                    // S3 local SSD) to the `.neon` base directory.
+                    // S3 local SSD) to the `.briven` base directory.
                     for entry in std::fs::read_dir(base_path)? {
                         let entry = entry?;
                         let path = entry.path();
@@ -1013,23 +1014,24 @@ impl LocalEnv {
 }
 
 pub fn base_path() -> PathBuf {
-    let path = match std::env::var_os("NEON_REPO_DIR") {
-        Some(val) => {
-            let path = PathBuf::from(val);
-            if !path.is_absolute() {
-                // repeat the env var in the error because our default is always absolute
-                panic!("NEON_REPO_DIR must be an absolute path, got {path:?}");
+    let path =
+        match std::env::var_os("BRIVEN_REPO_DIR").or_else(|| std::env::var_os("NEON_REPO_DIR")) {
+            Some(val) => {
+                let path = PathBuf::from(val);
+                if !path.is_absolute() {
+                    // repeat the env var in the error because our default is always absolute
+                    panic!("BRIVEN_REPO_DIR must be an absolute path, got {path:?}");
+                }
+                path
             }
-            path
-        }
-        None => {
-            let pwd = std::env::current_dir()
-                // technically this can fail but it's quite unlikeley
-                .expect("determine current directory");
-            let pwd_abs = pwd.canonicalize().expect("canonicalize current directory");
-            pwd_abs.join(".neon")
-        }
-    };
+            None => {
+                let pwd = std::env::current_dir()
+                    // technically this can fail but it's quite unlikeley
+                    .expect("determine current directory");
+                let pwd_abs = pwd.canonicalize().expect("canonicalize current directory");
+                pwd_abs.join(".briven")
+            }
+        };
     assert!(path.is_absolute());
     path
 }

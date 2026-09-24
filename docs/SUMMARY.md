@@ -4,13 +4,13 @@
 
 This page links to technical content about the Briven v2 database engine.
 
-Briven v2 is derived from the open-source Neon architecture. Public Briven product docs will live at `briven.tech`; this folder documents the engine internals used to build the Briven platform.
+Public Briven product docs will live at `briven.tech`; this folder documents the engine internals used to build the Briven platform.
 
 - [Briven Developer Entry](./briven.md)
 
-# Upstream Engine Docs
+# Engine Docs
 
-The documents below are inherited from Neon and describe the open-source engine architecture this repository is based on.
+The documents below describe the Briven engine architecture.
 
 # Architecture
 
@@ -53,4 +53,3 @@ The documents below are inherited from Neon and describe the open-source engine 
 
 Major changes are documented in RFCS:
 - See [RFCs](./rfcs/README.md) for more information
-- view upstream RFC history at https://github.com/neondatabase/neon/tree/main/docs/rfcs
