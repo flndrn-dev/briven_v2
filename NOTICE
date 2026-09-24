@@ -1,5 +1,8 @@
 Neon
 Copyright 2022 - 2024 Neon Inc.
 
+Briven v2
+Derived from Neon and branded for Briven.
+
 The PostgreSQL submodules in vendor/ are licensed under the PostgreSQL license.
 See vendor/postgres-vX/COPYRIGHT for details.

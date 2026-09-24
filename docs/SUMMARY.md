@@ -1,11 +1,16 @@
 # Summary
 
-# Looking for `neon.tech` docs?
+# Briven v2
 
-This page linkes to a selection of technical content about the open source code in this repository.
+This page links to technical content about the Briven v2 database engine.
 
-Please visit https://neon.tech/docs for documentation about using the Neon service, which is based on the code
-in this repository.
+Briven v2 is derived from the open-source Neon architecture. Public Briven product docs will live at `briven.tech`; this folder documents the engine internals used to build the Briven platform.
+
+- [Briven Developer Entry](./briven.md)
+
+# Upstream Engine Docs
+
+The documents below are inherited from Neon and describe the open-source engine architecture this repository is based on.
 
 # Architecture
 
