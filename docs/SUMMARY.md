@@ -7,6 +7,8 @@ This page links to technical content about the Briven v2 database engine.
 Public Briven product docs will live at `briven.tech`; this folder documents the engine internals used to build the Briven platform.
 
 - [Briven Developer Entry](./briven.md)
+- [Briven Control API](./briven-control-api.md)
+- [Sprint 3 Status](./sprint-3-status.md)
 
 # Engine Docs
 

@@ -2,6 +2,8 @@
 
 This crate contains tools to start a Briven development environment locally.
 Use the `briven_local` binary for Briven-facing workflows.
+The [local Briven Control API](../docs/briven-control-api.md) exposes project,
+branch, compute, and connection operations for product development.
 
 **Note**: this is a dev/test tool -- a minimal control plane suitable for testing
 code changes locally, but not suitable for running production systems.

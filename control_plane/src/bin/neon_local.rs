@@ -2001,7 +2001,7 @@ async fn neon_start_status_check(
     let retries = retry_timeout.as_millis() / RETRY_INTERVAL.as_millis();
     let notice_after_retries = retry_timeout.as_millis() / NOTICE_AFTER_RETRIES.as_millis();
 
-    println!("\nRunning neon status check");
+    println!("\nRunning Briven status check");
 
     for retry in 0..retries {
         if retry == notice_after_retries {
@@ -2095,7 +2095,7 @@ async fn try_stop_all(env: &local_env::LocalEnv, immediate: bool) {
 
     let storage_broker = StorageBroker::from_env(env);
     if let Err(e) = storage_broker.stop() {
-        eprintln!("neon broker stop failed: {e:#}");
+        eprintln!("Briven storage broker stop failed: {e:#}");
     }
 
     // Stop all storage controller instances. In the most common case there's only one,

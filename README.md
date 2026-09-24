@@ -8,7 +8,7 @@ Briven is a serverless Postgres platform foundation for `briven.tech`.
 
 This repository is the clean Briven v2 database engine baseline: stateless Postgres compute, separate storage, pageserver, safekeepers, WAL durability, timelines, and copy-on-write branches.
 
-The goal is to build Briven as a revenue-ready Postgres + pgvector + AI platform without carrying over the old Doltgres/Supabase-style platform code from Briven v1.
+The goal is to build Briven as a revenue-ready Postgres + pgvector + AI platform.
 
 ## Current Status
 
@@ -20,11 +20,15 @@ Sprint 1 is complete:
 - Local macOS build verified.
 - Briven logo, icon, and favicon copied into [`branding/`](./branding/).
 
-Sprint 2 is in progress:
+Sprint 2 is complete:
 
 - Public-facing Briven branding.
 - Safe README/docs entry points.
 - Briven-facing local CLI, Docker image names, and developer workflows.
+
+Sprint 3 is in progress. The [Briven Control API](./docs/briven-control-api.md)
+has a proven local project, branch, compute, and SQL connection workflow.
+The [Sprint 3 status](./docs/sprint-3-status.md) lists the hosted work still required.
 
 ## Architecture
 
@@ -110,7 +114,7 @@ After a successful build:
 
 ```bash
 ./target/debug/briven_local init
-./target/debug/briven_local start
+RUST_LOG=info ./target/debug/briven_local start
 ./target/debug/briven_local tenant create --set-default
 ./target/debug/briven_local endpoint create main
 ./target/debug/briven_local endpoint start main
