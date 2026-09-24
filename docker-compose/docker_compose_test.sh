@@ -4,8 +4,8 @@
 # Build a wrapper around the compute, start all services and runs a simple SQL query.
 # Repeats the process for all currenly supported Postgres versions.
 
-# Implicitly accepts `REPOSITORY` and `TAG` env vars that are passed into the compose file
-# Their defaults point at DockerHub `neondatabase/neon:latest` image.`,
+# Implicitly accepts Briven image env vars and `TAG` passed into the compose file.
+# Defaults point at the Briven image names documented in docker-compose/README.md.
 # to verify custom image builds (e.g pre-published ones).
 #
 # A test script for postgres extensions

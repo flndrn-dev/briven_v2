@@ -1,11 +1,23 @@
 # Example docker compose configuration
 
-The configuration in this directory is used for testing Neon docker images: it is
+The configuration in this directory is used for testing Briven engine Docker images. It is
 not intended for deploying a usable system. To run a development environment where
-you can experiment with a miniature Neon system, use `cargo neon` rather than container images.
+you can experiment with a miniature Briven/Neon-derived system, use `./target/debug/neon_local`
+rather than container images.
 
 This configuration does not start the storage controller, because the controller
 needs a way to reconfigure running computes, and no such thing exists in this setup.
+
+The default image names are Briven-facing:
+
+```text
+BRIVEN_ENGINE_IMAGE=ghcr.io/flndrn-dev/briven-engine
+BRIVEN_COMPUTE_REPOSITORY=ghcr.io/flndrn-dev
+BRIVEN_COMPUTE_IMAGE=briven-compute-node-v${PG_VERSION}
+BRIVEN_TEST_EXTENSIONS_IMAGE=ghcr.io/flndrn-dev/briven-test-extensions-v${PG_VERSION}
+```
+
+For upstream comparison, set those variables to the corresponding Neon image names.
 
 ## Generating the JWKS for a compute
 

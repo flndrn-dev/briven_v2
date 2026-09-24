@@ -2,5 +2,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Feature request
-    url: https://console.neon.tech/app/projects?modal=feedback
-    about: For feature requests in the Neon product, please submit via the feedback form on `https://console.neon.tech`
+    url: https://github.com/flndrn-dev/briven_v2/issues/new
+    about: For Briven v2 feature requests, open a GitHub issue in this repository.

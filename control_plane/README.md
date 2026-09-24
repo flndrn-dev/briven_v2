@@ -1,6 +1,6 @@
 # Local Development Control Plane (`neon_local`)
 
-This crate contains tools to start a Neon development environment locally. This utility can be used with the `cargo neon` command.  This is a convenience to invoke
+This crate contains tools to start a Briven/Neon-derived development environment locally. This utility can be used with the `cargo neon` command.  This is a convenience to invoke
 the `neon_local` binary.
 
 **Note**: this is a dev/test tool -- a minimal control plane suitable for testing
@@ -27,4 +27,4 @@ cargo neon endpoint create main --pg-version 16 --update-catalog true
 cargo neon endpoint start main --create-test-user true
 ```
 
-The first command creates `neon_superuser` and necessary roles. The second command creates `test` user and `neondb` database. You will see a connection string that connects you to the test user after running the second command.
+The first command creates the inherited `neon_superuser` role and necessary roles. The second command creates `test` user and `neondb` database. These names are engine internals today; Briven-facing names will be layered on top in the product control API. You will see a connection string that connects you to the test user after running the second command.

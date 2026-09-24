@@ -1,5 +1,5 @@
-ARG REPOSITORY=ghcr.io/neondatabase
-ARG COMPUTE_IMAGE=compute-node-v14
+ARG REPOSITORY=ghcr.io/flndrn-dev
+ARG COMPUTE_IMAGE=briven-compute-node-v14
 ARG TAG=latest
 
 FROM $REPOSITORY/${COMPUTE_IMAGE}:$TAG

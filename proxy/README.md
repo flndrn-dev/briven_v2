@@ -1,4 +1,4 @@
-# Proxy
+# Briven Proxy
 
 Proxy binary accepts `--auth-backend` CLI option, which determines auth scheme and cluster routing method. Following routing backends are currently implemented:
 
@@ -20,6 +20,10 @@ Also proxy can expose following services to the external world:
 * SQL over HTTP -- service that accepts POST requests with SQL text over HTTP
   and responds with JSON-serialised results.
 
+Compatibility note: this proxy is inherited from Neon. Some local examples still use
+`local.neon.build` DNS names and `Neon-*` protocol headers because those names are
+currently implemented in the proxy code. Briven-facing aliases should be added in a
+focused proxy compatibility pass, with tests, rather than by editing examples first.
 
 ## SQL over HTTP
 

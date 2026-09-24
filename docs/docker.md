@@ -1,23 +1,27 @@
-# Docker images of Neon
+# Docker images of Briven
 
 ## Images
 
-Currently we build two main images:
+Briven v2 uses the Neon-derived engine and builds two main image families:
 
-- [neondatabase/neon](https://hub.docker.com/repository/docker/neondatabase/neon) — image with pre-built `pageserver`, `safekeeper` and `proxy` binaries and all the required runtime dependencies. Built from [/Dockerfile](/Dockerfile).
-- [neondatabase/compute-node-v16](https://hub.docker.com/repository/docker/neondatabase/compute-node-v16) — compute node image with pre-built Postgres binaries from [neondatabase/postgres](https://github.com/neondatabase/postgres). Similar images exist for v15 and v14. Built from [/compute-node/Dockerfile](/compute/compute-node.Dockerfile).
+- `ghcr.io/flndrn-dev/briven-engine` — image with pre-built `pageserver`, `safekeeper`, `storage_broker`, and `proxy` binaries plus runtime dependencies. Built from [/Dockerfile](/Dockerfile).
+- `ghcr.io/flndrn-dev/briven-compute-node-v16` — compute node image with pre-built Postgres binaries from the Neon-derived Postgres fork. Similar images exist for v17, v15, and v14. Built from [/compute-node/Dockerfile](/compute/compute-node.Dockerfile).
+
+The upstream Neon image names are intentionally not removed from source code until Briven's own registry, release workflow, and compatibility tests are in place. Use Docker variables to point examples at upstream images when comparing against Neon.
 
 ## Build pipeline
 
-We build all images after a successful `release` tests run and push automatically to Docker Hub with two parallel CI jobs
+The Briven image naming target is:
 
-1. `neondatabase/compute-node-v17` (and -16, -v15, -v14)
+1. `ghcr.io/flndrn-dev/briven-compute-node-v17` (and -16, -v15, -v14)
 
-2. `neondatabase/neon`
+2. `ghcr.io/flndrn-dev/briven-engine`
+
+3. `ghcr.io/flndrn-dev/briven-test-extensions-v17` (and -16, -v15, -v14)
 
 ## Docker Compose example
 
-You can see a [docker compose](https://docs.docker.com/compose/) example to create a neon cluster in [/docker-compose/docker-compose.yml](/docker-compose/docker-compose.yml). It creates the following containers.
+You can see a [docker compose](https://docs.docker.com/compose/) example to create a local Briven engine cluster in [/docker-compose/docker-compose.yml](/docker-compose/docker-compose.yml). It creates the following containers.
 
 - pageserver x 1
 - safekeeper x 3
@@ -29,9 +33,14 @@ You can see a [docker compose](https://docs.docker.com/compose/) example to crea
 
 1. create containers
 
-You can specify version of neon cluster using following environment values.
+You can specify the version and image source using the following environment values.
+
 - PG_VERSION: postgres version for compute (default is 16 as of this writing)
-- TAG: the tag version of [docker image](https://registry.hub.docker.com/r/neondatabase/neon/tags), which is tagged in [CI test](/.github/workflows/build_and_test.yml). Default is 'latest'
+- BRIVEN_ENGINE_IMAGE: engine image name. Default is `ghcr.io/flndrn-dev/briven-engine`
+- BRIVEN_COMPUTE_REPOSITORY: compute image repository. Default is `ghcr.io/flndrn-dev`
+- BRIVEN_COMPUTE_IMAGE: compute image basename. Default is `briven-compute-node-v${PG_VERSION}`
+- TAG: image tag. Default is `latest`
+
 ```
 $ cd docker-compose/
 $ docker-compose down   # remove the containers if exists
@@ -80,4 +89,4 @@ Access http://localhost:9001 and sign in.
 - Username: `minio`
 - Password: `password`
 
-You can see durable pages and WAL data in `neon` bucket.
+You can see durable pages and WAL data in the `briven` bucket.

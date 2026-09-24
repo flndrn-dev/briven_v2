@@ -42,7 +42,7 @@ The documents below are inherited from Neon and describe the open-source engine 
 # Uncategorized
 
 - [authentication.md](./authentication.md)
-- [multitenancy.md](./multitenancy.md) — how multitenancy is organized in the pageserver and Zenith CLI.
+- [multitenancy.md](./multitenancy.md) — how multitenancy is organized in the pageserver and inherited local CLI.
 - [settings.md](./settings.md)
 #FIXME: move these under sourcetree.md
 #- [postgres_ffi/README.md](/libs/postgres_ffi/README.md)
@@ -53,4 +53,4 @@ The documents below are inherited from Neon and describe the open-source engine 
 
 Major changes are documented in RFCS:
 - See [RFCs](./rfcs/README.md) for more information
-- view the RFCs at https://github.com/neondatabase/neon/tree/main/docs/rfcs
+- view upstream RFC history at https://github.com/neondatabase/neon/tree/main/docs/rfcs
