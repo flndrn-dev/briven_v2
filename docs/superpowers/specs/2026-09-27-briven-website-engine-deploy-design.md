@@ -11,6 +11,7 @@ Deploy Briven's website/dashboard and the Briven v2 database engine from separat
 - Configure two independent Dokploy projects. The website project tracks `briven-website:main` and uses the Dokploy compose definition in `infra/dokploy/compose.dokploy.yml`. The engine project tracks `briven_v2:main` and uses an engine-specific compose definition. Both projects must have GitHub auto-deploy enabled so pushes to their own main branches trigger their own deployment.
 - Keep website and engine health checks, runtime environment, and deploy status independent. Do not copy website runtime secrets into either repository.
 - The engine repository currently includes a local development stack. Before using it as a public production database endpoint, verify persistent storage, secret configuration, network exposure, compute connectivity, and backup/restore behavior. The deployment must not expose its sample credentials or MinIO console publicly.
+- The current website/dashboard stack has its own API and DoltGres data plane. The v2 engine's hosted customer control plane is still open work, so this deployment keeps the v2 engine isolated; it does not silently switch dashboard projects to the v2 engine. Connect them only after the hosted API, roles, TLS routing, and recovery work is complete.
 
 ## Sign-in behavior
 
