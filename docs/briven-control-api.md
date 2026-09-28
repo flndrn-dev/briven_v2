@@ -1,9 +1,10 @@
-# Briven Control API (Local Development)
+# Briven Control API
 
 The Briven control API turns local engine operations into project, branch, compute,
-and connection workflows. It is a development adapter for one local Briven engine
-environment. It is not a hosted customer API yet: organization keys are manually
-configured, the engine runs on one machine, and connection strings are loopback-only.
+and connection workflows. It still controls one local Briven engine environment;
+hosted compute scheduling and customer-safe database credentials are pending.
+Signed customer mode enables pgvector on each created compute and verifies the
+vector type before reporting project creation as ready.
 
 ## Start
 
@@ -21,6 +22,7 @@ start the API:
 
 ```sh
 export BRIVEN_CONTROL_API_TOKEN="$(openssl rand -hex 32)"
+export BRIVEN_ENV=development
 ./target/debug/briven_control_api
 ```
 
@@ -29,18 +31,36 @@ organization keys instead, unset `BRIVEN_CONTROL_API_TOKEN` and set
 `BRIVEN_CONTROL_API_KEYS_JSON` to a JSON object mapping organization identifiers
 to distinct random keys of at least 32 characters. Only one credential variable
 may be set. These keys are development credentials, not customer login sessions.
+Static keys are rejected when `BRIVEN_ENV` is not `development`.
+
+For customer access, set the same random secret of at least 32 characters as
+`BRIVEN_CONTROL_IDENTITY_SECRET` on the website API and this engine process.
+Set `BRIVEN_CONTROL_DATABASE_URL` to PostgreSQL; signed customer mode refuses
+the local JSON catalog. Do not also set either static key variable. On the website API, set
+`BRIVEN_ENGINE_CONTROL_URL` to the engine's private service URL and apply
+`0057_org_control_keys.sql` to its control database. The API accepts a customer
+session or a `bck_` organization key at `/v1/control/projects...`, checks active
+organization membership for sessions and active key status for keys, then sends
+a 60-second signed assertion to the engine. Only owner/admin members can manage
+keys through `/v1/orgs/{id}/control-keys`; key plaintext is returned only on
+creation or rotation. Keep the engine on a private network. A non-loopback bind
+is allowed only with signed identity configured. The gateway does not expose
+the connection URI endpoint, because it still returns a local `cloud_admin`
+credential. In signed customer mode the engine also disables that endpoint.
 
 By default, project metadata remains in `product-projects.json` inside the
-local engine directory. Set `BRIVEN_CONTROL_DATABASE_URL` to a local PostgreSQL
-connection URL to use a transactional catalog instead. The API creates
-`briven_control.projects` at startup and refuses nonlocal database hosts because
-this adapter does not configure TLS. The PostgreSQL catalog does **not**
-automatically import the JSON file; migrate existing projects deliberately before
-switching storage. Both catalog modes scope project names and lookups to the
-authenticated organization.
+local engine directory. Set `BRIVEN_CONTROL_DATABASE_URL` to use a PostgreSQL
+catalog instead. Loopback PostgreSQL uses a local connection; remote hosts always
+use Rustls with system-trusted certificate and hostname validation, and the API
+requires TLS instead of falling back to plaintext. The API applies transactional,
+versioned migrations under a PostgreSQL advisory lock at startup. Migration 1
+adopts an existing `briven_control.projects` table without deleting rows. The API
+refuses to start against a newer catalog version. The catalog does **not** automatically import the JSON
+file; migrate existing projects deliberately before switching storage. Both
+catalog modes scope project names and lookups to the authenticated organization.
 
-The API listens on `127.0.0.1:8787` by default. Set `BRIVEN_CONTROL_API_BIND`
-to another loopback address if needed. `BRIVEN_REPO_DIR` selects the initialized
+The engine listens on `127.0.0.1:8787` by default. Set `BRIVEN_CONTROL_API_BIND`
+to the appropriate private interface if needed. `BRIVEN_REPO_DIR` selects the initialized
 local engine directory. `BRIVEN_LOCAL_BIN` can point to a different `briven_local`
 binary. Every `/v1` request needs `Authorization: Bearer <token>`.
 
@@ -74,9 +94,9 @@ development credential and must not be exposed to customers.
 
 ## Hosted API Work Still Required
 
-- Customer sign-in, key rotation, and managed organization membership.
-- Hosted PostgreSQL catalog with TLS, migrations, backup, and recovery/retry for
-  partial operations. The local JSON fallback is not transactional.
+- Live customer-to-engine integration proof and deploy configuration.
+- Hosted PostgreSQL catalog backup and recovery/retry for partial operations.
+  The local JSON fallback is not transactional.
 - Production compute scheduling, credentials, TLS, and public connection routing.
 - Provisioning reconciliation across controller and API restarts.
 - Limits and billing enforcement before inviting paid customers.

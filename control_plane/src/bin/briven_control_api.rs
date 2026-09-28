@@ -1,6 +1,6 @@
 //! Briven product API for a single local engine environment.
-//! This adapter is for development; hosted operation still needs customer
-//! authentication, secure database roles, and a production compute scheduler.
+//! This adapter uses signed customer identity from the website API.
+//! Hosted operation still needs secure database roles and a compute scheduler.
 
 use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ mod auth;
 #[path = "../briven_control_api/catalog.rs"]
 mod catalog;
 
-use auth::AuthConfig;
+use auth::{AuthConfig, Principal};
 use catalog::{Catalog, CreateError, Project, ProjectState};
 
 #[derive(Clone)]
@@ -104,17 +104,24 @@ fn engine(error: impl std::fmt::Display) -> ApiError {
     )
 }
 
-fn authorize<'a>(headers: &HeaderMap, auth: &'a AuthConfig) -> ApiResult<&'a str> {
+fn authorize(headers: &HeaderMap, auth: &AuthConfig, write: bool) -> ApiResult<Principal> {
     let supplied = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    supplied
-        .and_then(|token| auth.organization_for(token))
+    let principal = supplied
+        .and_then(|token| auth.principal_for(token))
         .ok_or(ApiError(
             StatusCode::UNAUTHORIZED,
             "authentication required",
-        ))
+        ))?;
+    if write && !principal.can_write() {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "insufficient organization role",
+        ));
+    }
+    Ok(principal)
 }
 
 fn valid_name(name: &str) -> bool {
@@ -222,6 +229,27 @@ async fn can_query(uri: &str) -> bool {
     .is_ok_and(|result| result.is_ok())
 }
 
+async fn enable_vector(uri: &str) -> ApiResult<()> {
+    let result = tokio::time::timeout(Duration::from_secs(15), async {
+        let (client, connection) =
+            tokio_postgres::connect(&format!("{uri}?sslmode=disable"), NoTls).await?;
+        let task = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let result = client
+            .batch_execute("CREATE EXTENSION IF NOT EXISTS vector; SELECT '[1,2,3]'::vector(3);")
+            .await;
+        task.abort();
+        result
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(engine(error)),
+        Err(error) => Err(engine(error)),
+    }
+}
+
 async fn health() -> &'static str {
     "ok"
 }
@@ -230,7 +258,8 @@ async fn list_projects(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Vec<Project>>> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, false)?;
+    let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     Ok(Json(
         state.catalog.load(organization).await.map_err(internal)?,
@@ -242,7 +271,8 @@ async fn create_project(
     headers: HeaderMap,
     Json(input): Json<CreateProject>,
 ) -> ApiResult<(StatusCode, Json<Project>)> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, true)?;
+    let organization = principal.organization.as_str();
     if !valid_name(&input.name) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "invalid project name"));
     }
@@ -302,6 +332,9 @@ async fn create_project(
                 "created compute is unavailable",
             ));
         }
+        if state.auth.uses_customer_identity() {
+            enable_vector(&endpoint.connstr("cloud_admin", "postgres")).await?;
+        }
         Ok(())
     }
     .await;
@@ -325,7 +358,8 @@ async fn get_project(
     headers: HeaderMap,
     RoutePath(id): RoutePath<String>,
 ) -> ApiResult<Json<Project>> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, false)?;
+    let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
     Ok(Json(project(&projects, &id)?.clone()))
@@ -336,7 +370,8 @@ async fn list_branches(
     headers: HeaderMap,
     RoutePath(id): RoutePath<String>,
 ) -> ApiResult<Json<Vec<Branch>>> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, false)?;
+    let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
     project(&projects, &id)?;
@@ -361,7 +396,8 @@ async fn create_branch(
     RoutePath(id): RoutePath<String>,
     Json(input): Json<CreateBranch>,
 ) -> ApiResult<(StatusCode, Json<Branch>)> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, true)?;
+    let organization = principal.organization.as_str();
     if !valid_name(&input.name) || !valid_name(input.parent.as_deref().unwrap_or("main")) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "invalid branch name"));
     }
@@ -411,7 +447,8 @@ async fn list_computes(
     headers: HeaderMap,
     RoutePath(id): RoutePath<String>,
 ) -> ApiResult<Json<Vec<Compute>>> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, false)?;
+    let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
     project(&projects, &id)?;
@@ -452,7 +489,8 @@ async fn create_compute(
     headers: HeaderMap,
     RoutePath((id, branch)): RoutePath<(String, String)>,
 ) -> ApiResult<(StatusCode, Json<Compute>)> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, true)?;
+    let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
     let existing = project(&projects, &id)?;
@@ -490,6 +528,9 @@ async fn create_compute(
             "created compute is unavailable",
         ));
     }
+    if state.auth.uses_customer_identity() {
+        enable_vector(&endpoint.connstr("cloud_admin", "postgres")).await?;
+    }
     Ok((
         StatusCode::CREATED,
         Json(Compute {
@@ -505,7 +546,14 @@ async fn get_connection(
     headers: HeaderMap,
     RoutePath((id, branch)): RoutePath<(String, String)>,
 ) -> ApiResult<Json<Connection>> {
-    let organization = authorize(&headers, &state.auth)?;
+    let principal = authorize(&headers, &state.auth, false)?;
+    if state.auth.uses_customer_identity() {
+        return Err(ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "customer database credentials are not available yet",
+        ));
+    }
+    let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
     project(&projects, &id)?;
@@ -542,6 +590,10 @@ async fn get_connection(
 #[tokio::main]
 async fn main() -> Result<()> {
     let auth = Arc::new(AuthConfig::from_env()?);
+    if !auth.uses_customer_identity() && std::env::var("BRIVEN_ENV").as_deref() != Ok("development")
+    {
+        bail!("static control keys are development-only; configure BRIVEN_CONTROL_IDENTITY_SECRET");
+    }
     let repo = base_path();
     LocalEnv::load_config(&repo).context("initialize the local engine with briven_local init")?;
     let cli = std::env::var_os("BRIVEN_LOCAL_BIN")
@@ -558,10 +610,13 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| "127.0.0.1:8787".to_string())
         .parse()
         .context("invalid BRIVEN_CONTROL_API_BIND")?;
-    if !address.ip().is_loopback() {
-        bail!("Briven local control API must bind to a loopback address");
+    if !address.ip().is_loopback() && !auth.uses_customer_identity() {
+        bail!("non-loopback control API requires signed customer identity");
     }
     let catalog = Catalog::from_env(repo.clone()).await?;
+    if auth.uses_customer_identity() && matches!(catalog, Catalog::Local(_)) {
+        bail!("signed customer mode requires BRIVEN_CONTROL_DATABASE_URL");
+    }
     let state = AppState {
         repo,
         cli,

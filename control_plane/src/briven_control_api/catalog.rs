@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use rustls::RootCertStore;
 use serde::{Deserialize, Serialize};
-use tokio_postgres::config::Host;
+use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres::{Client, NoTls, error::SqlState};
 
 #[derive(Clone)]
@@ -69,21 +70,9 @@ impl Catalog {
         let Some(dsn) = std::env::var("BRIVEN_CONTROL_DATABASE_URL").ok() else {
             return Ok(Self::Local(repo));
         };
-        validate_local_dsn(&dsn)?;
-        let client = pg_client(&dsn).await?;
-        client
-            .batch_execute(
-                "CREATE SCHEMA IF NOT EXISTS briven_control;
-                 CREATE TABLE IF NOT EXISTS briven_control.projects (
-                   id text PRIMARY KEY,
-                   organization_id text NOT NULL,
-                   name text NOT NULL,
-                   main_branch_id text NOT NULL,
-                   state text NOT NULL CHECK (state IN ('provisioning', 'ready', 'failed')),
-                   UNIQUE (organization_id, name)
-                 );",
-            )
-            .await?;
+        validate_catalog_dsn(&dsn)?;
+        let mut client = pg_client(&dsn).await?;
+        migrate(&mut client).await?;
         Ok(Self::Postgres(dsn))
     }
 
@@ -190,6 +179,54 @@ impl Catalog {
     }
 }
 
+const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("migrations/0001_projects.sql"))];
+
+async fn migrate(client: &mut Client) -> Result<()> {
+    let transaction = client.transaction().await?;
+    // Serialize startup migrations across API replicas using the same catalog.
+    transaction
+        .query_one("SELECT pg_advisory_xact_lock($1)", &[&0x42726976656e_i64])
+        .await?;
+    transaction
+        .batch_execute(
+            "CREATE SCHEMA IF NOT EXISTS briven_control;
+             CREATE TABLE IF NOT EXISTS briven_control.schema_migrations (
+               version integer PRIMARY KEY,
+               applied_at timestamptz NOT NULL DEFAULT now()
+             );",
+        )
+        .await?;
+    let rows = transaction
+        .query(
+            "SELECT version FROM briven_control.schema_migrations ORDER BY version",
+            &[],
+        )
+        .await?;
+    let applied = rows
+        .iter()
+        .map(|row| row.get::<_, i32>(0))
+        .collect::<std::collections::HashSet<_>>();
+    if applied
+        .iter()
+        .any(|version| !MIGRATIONS.iter().any(|(known, _)| known == version))
+    {
+        bail!("control catalog has a migration newer than this API supports");
+    }
+    for (version, sql) in MIGRATIONS {
+        if !applied.contains(version) {
+            transaction.batch_execute(sql).await?;
+            transaction
+                .execute(
+                    "INSERT INTO briven_control.schema_migrations (version) VALUES ($1)",
+                    &[version],
+                )
+                .await?;
+        }
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
 fn registry_path(repo: &Path) -> PathBuf {
     repo.join("product-projects.json")
 }
@@ -210,33 +247,66 @@ fn save_local(repo: &Path, registry: &Registry) -> Result<()> {
     Ok(())
 }
 
-fn validate_local_dsn(dsn: &str) -> Result<()> {
+fn validate_catalog_dsn(dsn: &str) -> Result<()> {
     let config: tokio_postgres::Config = dsn.parse()?;
-    for host in config.get_hosts() {
-        match host {
-            Host::Tcp(name) if name == "localhost" || name == "127.0.0.1" || name == "::1" => {}
-            Host::Unix(_) => {}
-            Host::Tcp(_) => {
-                bail!("Briven control catalog must use local PostgreSQL until TLS is configured")
-            }
-        }
+    if config.get_hosts().is_empty() {
+        bail!("Briven control catalog DSN must include a PostgreSQL host");
     }
     Ok(())
 }
 
 async fn pg_client(dsn: &str) -> Result<Client> {
-    let (client, connection) = tokio_postgres::connect(dsn, NoTls).await?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            eprintln!("Briven catalog connection ended: {error}");
-        }
+    let mut config: tokio_postgres::Config = dsn.parse()?;
+    let remote = config.get_hosts().iter().any(|host| match host {
+        Host::Tcp(name) => !is_loopback_host(name),
+        Host::Unix(_) => false,
     });
-    Ok(client)
+
+    if remote {
+        // Require TLS so tokio-postgres cannot silently fall back to a
+        // plaintext connection. The Rustls connector validates the server
+        // certificate chain and hostname against the system trust store.
+        config.ssl_mode(SslMode::Require);
+        let loaded = rustls_native_certs::load_native_certs();
+        let mut roots = RootCertStore::empty();
+        let (added, rejected) = roots.add_parsable_certificates(loaded.certs);
+        if added == 0 {
+            bail!(
+                "system TLS trust store contains no usable certificates (rejected {rejected}; load errors: {:?})",
+                loaded.errors
+            );
+        }
+        let tls_config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+        let (client, connection) = config.connect(tls).await?;
+        tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                eprintln!("Briven catalog TLS connection ended: {error}");
+            }
+        });
+        Ok(client)
+    } else {
+        let (client, connection) = config.connect(NoTls).await?;
+        tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                eprintln!("Briven catalog connection ended: {error}");
+            }
+        });
+        Ok(client)
+    }
+}
+
+fn is_loopback_host(name: &str) -> bool {
+    name.eq_ignore_ascii_case("localhost") || name == "127.0.0.1" || name == "::1"
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Catalog, Project, ProjectState, Registry, validate_local_dsn};
+    use super::{
+        Catalog, Project, ProjectState, Registry, migrate, pg_client, validate_catalog_dsn,
+    };
     use utils::id::TenantId;
 
     #[test]
@@ -250,9 +320,54 @@ mod tests {
     }
 
     #[test]
-    fn remote_plaintext_catalog_is_rejected() {
-        assert!(validate_local_dsn("postgresql://localhost/briven").is_ok());
-        assert!(validate_local_dsn("postgresql://db.example.com/briven").is_err());
+    fn hosted_catalog_dsn_is_accepted_for_verified_tls_connections() {
+        assert!(validate_catalog_dsn("postgresql://localhost/briven").is_ok());
+        assert!(validate_catalog_dsn("postgresql://db.example.com/briven").is_ok());
+        assert!(validate_catalog_dsn("not a PostgreSQL connection string").is_err());
+    }
+
+    #[test]
+    fn loopback_host_detection_does_not_classify_remote_hosts_as_local() {
+        assert!(super::is_loopback_host("localhost"));
+        assert!(super::is_loopback_host("127.0.0.1"));
+        assert!(super::is_loopback_host("::1"));
+        assert!(!super::is_loopback_host("db.example.com"));
+    }
+
+    #[tokio::test]
+    async fn migrations_preserve_legacy_projects_and_are_idempotent() {
+        let Ok(dsn) = std::env::var("BRIVEN_TEST_DISPOSABLE_CATALOG_URL") else {
+            return;
+        };
+        let mut client = pg_client(&dsn).await.unwrap();
+        client
+            .batch_execute(
+                "CREATE SCHEMA briven_control;
+                 CREATE TABLE briven_control.projects (
+                   id text PRIMARY KEY, organization_id text NOT NULL,
+                   name text NOT NULL, main_branch_id text NOT NULL,
+                   state text NOT NULL CHECK (state IN ('provisioning', 'ready', 'failed')),
+                   UNIQUE (organization_id, name)
+                 );
+                 INSERT INTO briven_control.projects VALUES
+                   ('old-id', 'org-a', 'old-project', 'main-id', 'ready');",
+            )
+            .await
+            .unwrap();
+        migrate(&mut client).await.unwrap();
+        migrate(&mut client).await.unwrap();
+        let count: i64 = client
+            .query_one("SELECT count(*) FROM briven_control.projects", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let versions: i64 = client
+            .query_one("SELECT count(*) FROM briven_control.schema_migrations", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(count, 1);
+        assert_eq!(versions, 1);
     }
 
     #[tokio::test]

@@ -40,7 +40,7 @@ Briven is being built as:
 - AI application database platform.
 - Stripe-backed paid SaaS.
 
-The old Briven v1 Doltgres/Supabase-style platform code is not part of this repository.
+The old Briven v1 platform code is not part of this repository.
 
 ## Current Local Commands
 
