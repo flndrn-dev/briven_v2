@@ -21,6 +21,9 @@ not ready to switch production traffic to the v2 engine.
 - PostgreSQL catalog supports loopback plaintext for local development and verified
   Rustls TLS for remote hosts; the legacy local JSON catalog remains available.
 - Organization-scoped catalog names and durable project provisioning states.
+- A repeated create for the same organization and project name keeps one tenant.
+  A finished name is rejected. An interrupted or failed create resumes the saved
+  tenant and main timeline, and starts the compute only when it is not already running.
 - Transactional, versioned PostgreSQL catalog migrations that preserve existing
   project rows and refuse unknown future versions.
 - Signed customer mode requires a PostgreSQL catalog and enables and checks
@@ -43,6 +46,8 @@ not ready to switch production traffic to the v2 engine.
   to its key; organization `beta` received 404 for that project, and a request
   without a key received 401.
 - The focused Rust API tests and local build passed.
+- `retrying_project_creation_reuses_one_tenant` passed on 2026-09-29. It checks
+  the resume rule. A full engine restart drill was not rerun in that step.
 - Remote catalog hosts now require a verified TLS connection; focused host-selection
   and hosted-DSN validation tests were added.
 - The new organization control-key migration ran on a disposable PostgreSQL
@@ -72,14 +77,19 @@ database or customer data was touched.
   isolation against a live engine. The migration and key lifecycle have local
   PostgreSQL proofs; the engine bridge does not yet own website project
   provisioning. Static organization keys remain for local development only.
-- Replace the website's legacy snapshot implementation with engine-backed
-  branches or remove its public snapshot routes and controls for the cutover.
+- Build real restore from engine branches. The draft website already hides
+  the old snapshot doors and buttons: they answer that saved copies are not
+  available and do not open a project database. That check passed on
+  2026-09-29 (9 tests). The change is committed and pushed as `662ac51` on
+  `sprint3-serverless-postgres`. It is not on `main` and not deployed. The old
+  snapshot file remains, unused.
 - Connect the website project lifecycle and SQL paths to engine tenants and
   customer computes. The current PostgreSQL adapter still provisions databases
   on a shared admin endpoint for local proof.
 - Add catalog backup and reconciliation. Remote PostgreSQL connections use
   verified TLS. Existing JSON data has no automatic migration.
-- Add recovery for partial provisioning and project/branch lifecycle operations.
+- Add hosted recovery for partial provisioning beyond the local same-name resume,
+  plus project and branch lifecycle operations such as restore.
 - Issue project-specific database roles and secure credentials.
 - Connect to hosted compute scheduling, TLS routing, limits, and operational controls.
 - Prove project creation and connection from the public Briven service.

@@ -85,7 +85,11 @@ without a hyphen, and are at most 48 bytes.
 
 The API records `provisioning`, `ready`, or `failed` for each project in the
 selected catalog. It reports an engine failure as an error and keeps the failed
-record for diagnosis. Connection URIs are returned only after a compute answers
+record for diagnosis. Sending the same project name again, in the same
+organization, does not create a second tenant. A `ready` name returns conflict.
+A `provisioning` or `failed` name continues the saved tenant and main timeline,
+starts the existing compute when it is not already running, and returns that
+same project. Connection URIs are returned only after a compute answers
 a real SQL query and carry `environment: "local"`. The API chooses free local
 ports for each compute.
 
@@ -98,7 +102,8 @@ development credential and must not be exposed to customers.
 - Hosted PostgreSQL catalog backup and recovery/retry for partial operations.
   The local JSON fallback is not transactional.
 - Production compute scheduling, credentials, TLS, and public connection routing.
-- Provisioning reconciliation across controller and API restarts.
+- Hosted provisioning reconciliation across controller and API restarts. The
+  local API already resumes one saved tenant after an interrupted create.
 - Limits and billing enforcement before inviting paid customers.
 
 The dashboard should use this API shape, but it must not treat the local adapter

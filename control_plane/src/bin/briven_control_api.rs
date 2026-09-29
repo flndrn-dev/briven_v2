@@ -266,6 +266,82 @@ async fn list_projects(
     ))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ExistingName {
+    Create,
+    Resume,
+    Conflict,
+}
+
+/// A repeated create for the same organization and name must keep one tenant.
+/// A finished project stays taken. An interrupted or failed create is resumed.
+fn existing_name(state: Option<ProjectState>) -> ExistingName {
+    match state {
+        None => ExistingName::Create,
+        Some(ProjectState::Ready) => ExistingName::Conflict,
+        Some(ProjectState::Provisioning | ProjectState::Failed) => ExistingName::Resume,
+    }
+}
+
+fn load_plane(state: &AppState) -> ApiResult<ComputeControlPlane> {
+    let env = LocalEnv::load_config(&state.repo).map_err(engine)?;
+    ComputeControlPlane::load(env).map_err(engine)
+}
+
+async fn ensure_main_compute(
+    state: &AppState,
+    tenant_id: &str,
+    timeline_id: &str,
+) -> ApiResult<()> {
+    // Tenant and timeline creation already accept the same ids again.
+    run_cli(
+        state,
+        &[
+            "tenant",
+            "create",
+            "--tenant-id",
+            tenant_id,
+            "--timeline-id",
+            timeline_id,
+        ],
+    )
+    .await?;
+    let endpoint_id = format!("ep-{tenant_id}");
+    let mut plane = load_plane(state)?;
+    if !plane.endpoints.contains_key(&endpoint_id) {
+        create_endpoint(state, tenant_id, "main", &endpoint_id).await?;
+        plane = load_plane(state)?;
+    }
+    let already_running = {
+        let endpoint = plane.endpoints.get(&endpoint_id).ok_or(ApiError(
+            StatusCode::BAD_GATEWAY,
+            "created compute is unavailable",
+        ))?;
+        // Starting a compute that is already running is an error, so only start
+        // one that stopped or never finished starting.
+        endpoint.status() == EndpointStatus::Running
+    };
+    if !already_running {
+        run_cli(state, &["endpoint", "start", &endpoint_id]).await?;
+        plane = load_plane(state)?;
+    }
+    let endpoint = plane.endpoints.get(&endpoint_id).ok_or(ApiError(
+        StatusCode::BAD_GATEWAY,
+        "created compute is unavailable",
+    ))?;
+    let uri = endpoint.connstr("cloud_admin", "postgres");
+    if !can_query(&uri).await {
+        return Err(ApiError(
+            StatusCode::BAD_GATEWAY,
+            "created compute is unavailable",
+        ));
+    }
+    if state.auth.uses_customer_identity() {
+        enable_vector(&uri).await?;
+    }
+    Ok(())
+}
+
 async fn create_project(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -278,67 +354,58 @@ async fn create_project(
     }
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
-    if projects.iter().any(|project| project.name == input.name) {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "project name already exists",
-        ));
-    }
-    let tenant_id = TenantId::generate().to_string();
-    let timeline_id = TimelineId::generate().to_string();
-    let mut created = Project {
-        id: tenant_id.clone(),
-        organization_id: organization.to_string(),
-        name: input.name,
-        main_branch_id: timeline_id.clone(),
-        state: ProjectState::Provisioning,
+    let existing = projects.iter().find(|project| project.name == input.name);
+    let mut resumed = false;
+    let mut created = if let Some(existing) = existing {
+        match existing_name(Some(existing.state)) {
+            ExistingName::Conflict => {
+                return Err(ApiError(
+                    StatusCode::CONFLICT,
+                    "project name already exists",
+                ));
+            }
+            ExistingName::Resume => {
+                resumed = true;
+                existing.clone()
+            }
+            ExistingName::Create => {
+                unreachable!("a saved project is either ready or still unfinished")
+            }
+        }
+    } else {
+        let tenant_id = TenantId::generate().to_string();
+        let timeline_id = TimelineId::generate().to_string();
+        let created = Project {
+            id: tenant_id,
+            organization_id: organization.to_string(),
+            name: input.name,
+            main_branch_id: timeline_id,
+            state: ProjectState::Provisioning,
+        };
+        match state.catalog.insert(&created).await {
+            Ok(()) => {}
+            Err(CreateError::Duplicate) => {
+                return Err(ApiError(
+                    StatusCode::CONFLICT,
+                    "project name already exists",
+                ));
+            }
+            Err(CreateError::Other(error)) => return Err(internal(error)),
+        }
+        created
     };
-    match state.catalog.insert(&created).await {
-        Ok(()) => {}
-        Err(CreateError::Duplicate) => {
-            return Err(ApiError(
-                StatusCode::CONFLICT,
-                "project name already exists",
-            ));
-        }
-        Err(CreateError::Other(error)) => return Err(internal(error)),
+    if resumed && !matches!(created.state, ProjectState::Provisioning) {
+        created.state = ProjectState::Provisioning;
+        state
+            .catalog
+            .set_state(organization, &created.id, created.state)
+            .await
+            .map_err(internal)?;
     }
 
-    let endpoint_id = format!("ep-{tenant_id}");
-    let result = async {
-        run_cli(
-            &state,
-            &[
-                "tenant",
-                "create",
-                "--tenant-id",
-                &tenant_id,
-                "--timeline-id",
-                &timeline_id,
-            ],
-        )
-        .await?;
-        create_endpoint(&state, &tenant_id, "main", &endpoint_id).await?;
-        run_cli(&state, &["endpoint", "start", &endpoint_id]).await?;
-        let plane = ComputeControlPlane::load(LocalEnv::load_config(&state.repo).map_err(engine)?)
-            .map_err(engine)?;
-        let endpoint = plane.endpoints.get(&endpoint_id).ok_or(ApiError(
-            StatusCode::BAD_GATEWAY,
-            "created compute is unavailable",
-        ))?;
-        if !can_query(&endpoint.connstr("cloud_admin", "postgres")).await {
-            return Err(ApiError(
-                StatusCode::BAD_GATEWAY,
-                "created compute is unavailable",
-            ));
-        }
-        if state.auth.uses_customer_identity() {
-            enable_vector(&endpoint.connstr("cloud_admin", "postgres")).await?;
-        }
-        Ok(())
-    }
-    .await;
-
+    let tenant_id = created.id.clone();
+    let timeline_id = created.main_branch_id.clone();
+    let result = ensure_main_compute(&state, &tenant_id, &timeline_id).await;
     created.state = if result.is_ok() {
         ProjectState::Ready
     } else {
@@ -350,7 +417,12 @@ async fn create_project(
         .await
         .map_err(internal)?;
     result?;
-    Ok((StatusCode::CREATED, Json(created)))
+    let status = if resumed {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((status, Json(created)))
 }
 
 async fn get_project(
@@ -650,7 +722,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_name;
+    use super::{existing_name, valid_name, ExistingName, ProjectState};
 
     #[test]
     fn names_cannot_escape_cli_or_collide_with_paths() {
@@ -667,5 +739,22 @@ mod tests {
             assert!(!valid_name(name), "accepted {name}");
         }
         assert!(valid_name("customer-db-2"));
+    }
+
+    #[test]
+    fn retrying_project_creation_reuses_one_tenant() {
+        assert_eq!(existing_name(None), ExistingName::Create);
+        assert_eq!(
+            existing_name(Some(ProjectState::Provisioning)),
+            ExistingName::Resume
+        );
+        assert_eq!(
+            existing_name(Some(ProjectState::Failed)),
+            ExistingName::Resume
+        );
+        assert_eq!(
+            existing_name(Some(ProjectState::Ready)),
+            ExistingName::Conflict
+        );
     }
 }

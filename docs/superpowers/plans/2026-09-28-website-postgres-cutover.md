@@ -69,7 +69,7 @@
 - [x] Replace legacy SQL transaction flags and catalog workarounds with PostgreSQL behavior.
 - [ ] Implement branch-backed snapshots through the engine API, including restore semantics.
 - [x] Replace commit-hash polling with a PostgreSQL change feed and prove project isolation.
-- [ ] Remove or hide routes that cannot be made coherent before cutover.
+- [x] Remove or hide routes that cannot be made coherent before cutover. Hidden and pushed as `662ac51` on `sprint3-serverless-postgres` on 2026-09-29. Not on `main` and not deployed. Branch-backed restore stays open.
 
 ### Task 5: Hosted engine and public proof
 
