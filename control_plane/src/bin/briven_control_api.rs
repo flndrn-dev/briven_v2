@@ -667,18 +667,46 @@ async fn get_connection(
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(5432);
         let proxy_host_set = customer_credential::valid_proxy_host(&host) && port != 0;
-        if !proxy_host_set {
-            return Err(ApiError(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "customer database credentials are not available yet",
-            ));
+        match customer_credential::connection_gate(true, principal.can_write(), proxy_host_set, true)
+        {
+            customer_credential::ConnectionGate::Forbidden => {
+                return Err(ApiError(
+                    StatusCode::FORBIDDEN,
+                    "insufficient organization role",
+                ));
+            }
+            customer_credential::ConnectionGate::Unavailable => {
+                return Err(ApiError(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "customer database credentials are not available yet",
+                ));
+            }
+            customer_credential::ConnectionGate::NotReady => {
+                return Err(ApiError(StatusCode::CONFLICT, "project is not ready"));
+            }
+            customer_credential::ConnectionGate::Issue => {}
         }
         let organization = principal.organization.as_str();
         let _guard = state.gate.lock().await;
         let projects = state.catalog.load(organization).await.map_err(internal)?;
         let found = project(&projects, &id)?;
-        if !matches!(found.state, ProjectState::Ready) {
-            return Err(ApiError(StatusCode::CONFLICT, "project is not ready"));
+        match customer_credential::connection_gate(
+            true,
+            principal.can_write(),
+            proxy_host_set,
+            matches!(found.state, ProjectState::Ready),
+        ) {
+            customer_credential::ConnectionGate::NotReady => {
+                return Err(ApiError(StatusCode::CONFLICT, "project is not ready"));
+            }
+            customer_credential::ConnectionGate::Issue => {}
+            customer_credential::ConnectionGate::Forbidden
+            | customer_credential::ConnectionGate::Unavailable => {
+                return Err(ApiError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "control API operation failed",
+                ));
+            }
         }
         let env = LocalEnv::load_config(&state.repo).map_err(engine)?;
         let tenant_id = id.parse::<TenantId>().map_err(internal)?;
