@@ -1,7 +1,7 @@
 # Customer database home and create-a-project connection
 
 Date: 2026-09-29
-Status: agreed in conversation. Waiting for a review of this file before a build plan.
+Status: agreed 2026-09-29. The local build steps are in docs/superpowers/plans/2026-09-29-customer-database-home.md. That plan does not install the engine or switch the live site.
 
 This file records where a customer's database lives, and how Create a project connects to it. It follows the Sprint 3 cutover in `2026-09-28-sprint-3-serverless-cutover-design.md`. It does not deploy anything.
 
