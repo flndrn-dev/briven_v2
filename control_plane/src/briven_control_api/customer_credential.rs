@@ -165,6 +165,35 @@ fn safe_ident(name: &str) -> bool {
         && name.chars().all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_')
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionGate {
+    Forbidden,
+    Unavailable,
+    NotReady,
+    Issue,
+}
+
+pub fn connection_gate(
+    customer_mode: bool,
+    can_write: bool,
+    proxy_host_set: bool,
+    ready: bool,
+) -> ConnectionGate {
+    if !customer_mode {
+        return ConnectionGate::Issue;
+    }
+    if !can_write {
+        return ConnectionGate::Forbidden;
+    }
+    if !proxy_host_set {
+        return ConnectionGate::Unavailable;
+    }
+    if !ready {
+        return ConnectionGate::NotReady;
+    }
+    ConnectionGate::Issue
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -230,5 +259,40 @@ mod tests {
         quoted.password = "aa'; drop role postgres; --".to_string();
         // pad check: a non-hex password must produce no SQL
         assert!(customer_role_statements(&quoted).is_none());
+    }
+
+    #[test]
+    fn customer_connection_gate_refuses_viewers_before_a_missing_proxy() {
+        use super::{connection_gate, ConnectionGate};
+        assert_eq!(
+            connection_gate(true, false, false, true),
+            ConnectionGate::Forbidden
+        );
+    }
+
+    #[test]
+    fn customer_connection_gate_stays_unavailable_until_the_proxy_host_is_set() {
+        use super::{connection_gate, ConnectionGate};
+        assert_eq!(
+            connection_gate(true, true, false, true),
+            ConnectionGate::Unavailable
+        );
+        assert_eq!(
+            connection_gate(true, true, true, false),
+            ConnectionGate::NotReady
+        );
+    }
+
+    #[test]
+    fn customer_connection_gate_issues_for_a_ready_writer_and_keeps_dev_mode() {
+        use super::{connection_gate, ConnectionGate};
+        assert_eq!(
+            connection_gate(true, true, true, true),
+            ConnectionGate::Issue
+        );
+        assert_eq!(
+            connection_gate(false, false, false, false),
+            ConnectionGate::Issue
+        );
     }
 }

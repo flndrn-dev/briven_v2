@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_postgres::NoTls;
+use tokio_postgres::error::SqlState;
 use utils::id::{TenantId, TimelineId};
 
 #[path = "../briven_control_api/auth.rs"]
@@ -73,6 +74,8 @@ struct Compute {
 struct Connection {
     uri: String,
     environment: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -249,6 +252,42 @@ async fn enable_vector(uri: &str) -> ApiResult<()> {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(engine(error)),
         Err(error) => Err(engine(error)),
+    }
+}
+
+async fn apply_customer_role(admin_uri: &str, statements: &[String]) -> ApiResult<()> {
+    let result = tokio::time::timeout(Duration::from_secs(15), async {
+        let (client, connection) =
+            tokio_postgres::connect(&format!("{admin_uri}?sslmode=disable"), NoTls).await?;
+        let task = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let mut first = true;
+        let mut outcome = Ok(());
+        for statement in statements {
+            match client.simple_query(statement).await {
+                Ok(_) => {}
+                Err(error) if first && error.code() == Some(&SqlState::DUPLICATE_OBJECT) => {}
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
+                }
+            }
+            first = false;
+        }
+        task.abort();
+        outcome
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => Ok(()),
+        _ => {
+            eprintln!("Briven control API: customer role apply failed");
+            Err(ApiError(
+                StatusCode::BAD_GATEWAY,
+                "local database engine operation failed",
+            ))
+        }
     }
 }
 
@@ -620,13 +659,93 @@ async fn get_connection(
     headers: HeaderMap,
     RoutePath((id, branch)): RoutePath<(String, String)>,
 ) -> ApiResult<Json<Connection>> {
-    let principal = authorize(&headers, &state.auth, false)?;
     if state.auth.uses_customer_identity() {
-        return Err(ApiError(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "customer database credentials are not available yet",
-        ));
+        let principal = authorize(&headers, &state.auth, true)?;
+        let host = std::env::var("BRIVEN_CUSTOMER_PROXY_HOST").unwrap_or_default();
+        let port = std::env::var("BRIVEN_CUSTOMER_PROXY_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(5432);
+        let proxy_host_set = customer_credential::valid_proxy_host(&host) && port != 0;
+        if !proxy_host_set {
+            return Err(ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "customer database credentials are not available yet",
+            ));
+        }
+        let organization = principal.organization.as_str();
+        let _guard = state.gate.lock().await;
+        let projects = state.catalog.load(organization).await.map_err(internal)?;
+        let found = project(&projects, &id)?;
+        if !matches!(found.state, ProjectState::Ready) {
+            return Err(ApiError(StatusCode::CONFLICT, "project is not ready"));
+        }
+        let env = LocalEnv::load_config(&state.repo).map_err(engine)?;
+        let tenant_id = id.parse::<TenantId>().map_err(internal)?;
+        let timeline_id = env
+            .get_branch_timeline_id(&branch, tenant_id)
+            .ok_or(ApiError(StatusCode::NOT_FOUND, "branch not found"))?;
+        let plane = ComputeControlPlane::load(env).map_err(engine)?;
+        let endpoint = plane
+            .endpoints
+            .values()
+            .find(|endpoint| {
+                endpoint.tenant_id == tenant_id
+                    && endpoint.timeline_id == timeline_id
+                    && endpoint.status() == EndpointStatus::Running
+            })
+            .ok_or(ApiError(
+                StatusCode::CONFLICT,
+                "branch has no running compute",
+            ))?;
+        let admin_uri = endpoint.connstr("cloud_admin", "postgres");
+        if !can_query(&admin_uri).await {
+            return Err(ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "branch compute is unavailable",
+            ));
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(internal)?
+            .as_secs();
+        let password = customer_credential::random_customer_password();
+        let credential = customer_credential::issue_customer_credential(&id, "postgres", &password, now)
+            .ok_or(ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "control API operation failed",
+            ))?;
+        if !customer_credential::credential_opens_project(&credential.role, &id) {
+            return Err(ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "control API operation failed",
+            ));
+        }
+        let statements = customer_credential::customer_role_statements(&credential).ok_or(ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "control API operation failed",
+        ))?;
+        apply_customer_role(&admin_uri, &statements).await?;
+        let uri = customer_credential::customer_uri(
+            &credential.role,
+            &credential.password,
+            &host,
+            port,
+            "postgres",
+        )
+        .filter(|uri| customer_credential::publishable_customer_uri(uri))
+        .ok_or(ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "control API operation failed",
+        ))?;
+        return Ok(Json(Connection {
+            uri,
+            environment: "customer",
+            expires_at: Some(credential.valid_until),
+        }));
     }
+
+    let principal = authorize(&headers, &state.auth, false)?;
     let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
@@ -658,6 +777,7 @@ async fn get_connection(
     Ok(Json(Connection {
         uri: endpoint.connstr("cloud_admin", "postgres"),
         environment: "local",
+        expires_at: None,
     }))
 }
 
