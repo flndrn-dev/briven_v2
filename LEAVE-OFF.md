@@ -11,7 +11,7 @@
 
 | Repository | Branch | Last implementation commit | Remote |
 | --- | --- | --- | --- |
-| This engine repo, `flndrn-dev/briven_v2` | `sprint3-serverless-postgres` | `60215b012` — control catalog and signed PostgreSQL provisioning | `origin/sprint3-serverless-postgres` |
+| This engine repo, `flndrn-dev/briven_v2` | `sprint3-serverless-postgres` | `c6491f8e9` — resume one tenant when creation retries | `origin/sprint3-serverless-postgres` |
 | Website, `flndrn-dev/briven-website` | `sprint3-serverless-postgres` | `662ac51` — hide saved-copy doors until restore exists | `origin/sprint3-serverless-postgres` |
 
 Both branches stay off `main`, so the website's automatic Dokploy deployment was not triggered. The website saved-copy hide is pushed as `662ac51`. A local folder such as `/tmp/briven-website-sprint3` can still disappear on a Mac restart. The remote sprint branch is the durable copy. Do not work from website `main`.
