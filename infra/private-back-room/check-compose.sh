@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/../.."
+file=infra/private-back-room/compose.yml
+start=infra/private-back-room/start-private.sh
+test -f "$file"
+test -f "$start"
+if grep -nE '^[[:space:]]*ports:' "$file"; then
+  echo "refusing published ports" >&2
+  exit 1
+fi
+if grep -nE 'minio/minio|minio/mc' "$file"; then
+  echo "refusing deleted MinIO images" >&2
+  exit 1
+fi
+if grep -nE 'MINIO_ROOT_PASSWORD=password|PGPASSWORD=cloud_admin' "$file" "$start"; then
+  echo "refusing a practice password" >&2
+  exit 1
+fi
+if grep -nE 'traefik|Host\(`briven\.tech`\)' "$file"; then
+  echo "refusing a public route" >&2
+  exit 1
+fi
+if grep -nE '/var/lib/doltgres' "$file" "$start"; then
+  echo "refusing the live database volume" >&2
+  exit 1
+fi
+grep -q 'bitnamilegacy/minio:latest' "$file"
+grep -q 'bitnamilegacy/minio-client:latest' "$file"
+grep -q 'internal: true' "$file"
+grep -q 'briven_local init' "$start"
+grep -q 'briven_local start' "$start"
+grep -q 'briven_local storage-controller start' "$start"
+grep -q 'briven_control_api' "$start"
+echo "private room file is closed"

@@ -1,0 +1,80 @@
+# Private back room. No host ports. Secrets come from the Dokploy panel.
+# Do not deploy docker-compose/docker-compose.yml.
+name: briven-back-room
+
+services:
+  minio:
+    image: bitnamilegacy/minio:latest
+    user: "0:0"
+    entrypoint: ["/opt/bitnami/minio/bin/minio"]
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in the Dokploy panel}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in the Dokploy panel}
+    volumes:
+      - briven-back-room-minio:/data
+    networks:
+      - briven-back-room
+    restart: unless-stopped
+
+  minio-init:
+    image: bitnamilegacy/minio-client:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in the Dokploy panel}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in the Dokploy panel}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mc=/opt/bitnami/minio-client/bin/mc
+        until "$$mc" alias set room http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do
+          sleep 1
+        done
+        "$$mc" mb --ignore-existing room/briven
+    networks:
+      - briven-back-room
+    restart: "no"
+
+  catalog:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: briven_catalog
+      POSTGRES_PASSWORD: ${BRIVEN_CONTROL_DB_PASSWORD:?set in the Dokploy panel}
+      POSTGRES_DB: briven_control
+    volumes:
+      - briven-back-room-catalog:/var/lib/postgresql/data
+    networks:
+      - briven-back-room
+    restart: unless-stopped
+
+  engine:
+    image: ghcr.io/flndrn-dev/briven-engine:${BRIVEN_ENGINE_TAG:-latest}
+    depends_on:
+      - minio-init
+      - catalog
+    environment:
+      BRIVEN_ENV: production
+      BRIVEN_REPO_DIR: /var/lib/briven
+      BRIVEN_CONTROL_API_BIND: 0.0.0.0:8787
+      BRIVEN_CONTROL_IDENTITY_SECRET: ${BRIVEN_CONTROL_IDENTITY_SECRET:?set in the Dokploy panel}
+      BRIVEN_CONTROL_DATABASE_URL: postgres://briven_catalog:${BRIVEN_CONTROL_DB_PASSWORD:?set in the Dokploy panel}@catalog:5432/briven_control
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in the Dokploy panel}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in the Dokploy panel}
+    volumes:
+      - briven-back-room-data:/var/lib/briven
+      - ./start-private.sh:/start-private.sh:ro
+    command: ["/bin/sh", "/start-private.sh"]
+    networks:
+      - briven-back-room
+    restart: unless-stopped
+
+networks:
+  briven-back-room:
+    internal: true
+
+volumes:
+  briven-back-room-minio:
+  briven-back-room-catalog:
+  briven-back-room-data:
