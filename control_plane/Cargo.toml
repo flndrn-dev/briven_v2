@@ -17,6 +17,7 @@ jsonwebtoken.workspace = true
 nix.workspace = true
 once_cell.workspace = true
 pem.workspace = true
+rand.workspace = true
 humantime-serde.workspace = true
 hyper0.workspace = true
 regex.workspace = true

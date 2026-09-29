@@ -25,6 +25,8 @@ use utils::id::{TenantId, TimelineId};
 mod auth;
 #[path = "../briven_control_api/catalog.rs"]
 mod catalog;
+#[path = "../briven_control_api/customer_credential.rs"]
+mod customer_credential;
 
 use auth::{AuthConfig, Principal};
 use catalog::{Catalog, CreateError, Project, ProjectState};
