@@ -120,6 +120,8 @@ RUN  --mount=type=secret,uid=1000,id=SUBZERO_ACCESS_TOKEN \
       --bin proxy  \
       --bin endpoint_storage \
       --bin neon_local \
+      --bin briven_local \
+      --bin briven_control_api \
       --bin storage_scrubber \
       --locked --release \
     && mold -run make -j $(nproc) -s neon-pg-ext
@@ -164,6 +166,8 @@ COPY --from=build --chown=neon:neon /home/nonroot/target/release/proxy          
 COPY --from=build --chown=neon:neon /home/nonroot/target/release/endpoint_storage    /usr/local/bin
 COPY --from=build --chown=neon:neon /home/nonroot/target/release/neon_local          /usr/local/bin
 COPY --from=build --chown=neon:neon /home/nonroot/target/release/storage_scrubber    /usr/local/bin
+COPY --from=build --chown=neon:neon /home/nonroot/target/release/briven_local        /usr/local/bin
+COPY --from=build --chown=neon:neon /home/nonroot/target/release/briven_control_api  /usr/local/bin
 COPY --from=build /home/nonroot/pg_install/v14 /usr/local/v14/
 COPY --from=build /home/nonroot/pg_install/v15 /usr/local/v15/
 COPY --from=build /home/nonroot/pg_install/v16 /usr/local/v16/

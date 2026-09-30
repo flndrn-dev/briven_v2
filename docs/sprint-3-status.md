@@ -66,6 +66,14 @@ not ready to switch production traffic to the v2 engine.
   runtime, realtime, schema, and shared package checks passed on the cutover branch.
 - A separate Dokploy compose candidate uses external PostgreSQL URLs and does
   not start a legacy database service; its Compose syntax passed validation.
+- On 2026-09-30, the website Sprint 3 branch added a nullable engine tenant ID,
+  a 60-second signed Create a project request, engine-ready gating, organization
+  role checks, and a viewer denial on the connection route. Focused tests (5)
+  and the API bundle build passed. The change is pushed as `4e73abe` on
+  `sprint3-serverless-postgres`; it is not deployed.
+- The private-room Compose check still passes. The engine Dockerfile now includes
+  the Briven local CLI and control API in its build and runtime stages. That
+  image has not been built or verified.
 
 The engine proof used a disposable local engine directory. The organization
 isolation proof and key lifecycle check used disposable local PostgreSQL. No production
@@ -83,9 +91,15 @@ database or customer data was touched.
   2026-09-29 (9 tests). The change is committed and pushed as `662ac51` on
   `sprint3-serverless-postgres`. It is not on `main` and not deployed. The old
   snapshot file remains, unused.
-- Connect the website project lifecycle and SQL paths to engine tenants and
-  customer computes. The current PostgreSQL adapter still provisions databases
-  on a shared admin endpoint for local proof.
+- Complete the website SQL, runtime, and realtime paths against engine computes.
+  Create a project now records an engine tenant when the private control URL is
+  configured, but the current PostgreSQL adapters still target a shared admin
+  endpoint. The branch must not serve public engine-backed projects yet.
+- Build and verify the private engine image before installing the back room.
+  A registry manifest check for `ghcr.io/flndrn-dev/briven-engine:latest` was
+  denied from this machine. The checked-in generic Dockerfile had not included
+  `briven_local` or `briven_control_api`; the source change is unbuilt. The
+  private Compose has not been started.
 - Add catalog backup and reconciliation. Remote PostgreSQL connections use
   verified TLS. Existing JSON data has no automatic migration.
 - Add hosted recovery for partial provisioning beyond the local same-name resume,
