@@ -22,21 +22,25 @@ pg_auth_type = "Trust"
 http_auth_type = "Trust"
 grpc_auth_type = "Trust"
 no_sync = false
+remote_storage = { bucket_name = "briven", bucket_region = "us-east-1", prefix_in_bucket = "pageserver/", endpoint = "http://minio:9000" }
 
 [[safekeepers]]
 id = 1
 pg_port = 5454
 http_port = 7676
 sync = true
+remote_storage = "{bucket_name='briven',bucket_region='us-east-1',prefix_in_bucket='safekeeper/',endpoint='http://minio:9000'}"
 
 [[safekeepers]]
 id = 2
 pg_port = 5455
 http_port = 7677
 sync = true
+remote_storage = "{bucket_name='briven',bucket_region='us-east-1',prefix_in_bucket='safekeeper/',endpoint='http://minio:9000'}"
 
 [[safekeepers]]
 id = 3
 pg_port = 5456
 http_port = 7678
 sync = true
+remote_storage = "{bucket_name='briven',bucket_region='us-east-1',prefix_in_bucket='safekeeper/',endpoint='http://minio:9000'}"

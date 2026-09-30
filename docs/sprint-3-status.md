@@ -78,6 +78,14 @@ not ready to switch production traffic to the v2 engine.
   safekeeper definitions. Startup now uses that config, enables disk sync, and
   calls the single `briven_local start` operation that starts the broker,
   controller, pageserver, and safekeepers. It has not been started in Docker.
+- The private Compose now waits for the MinIO bucket and catalog readiness.
+  The catalog exposes a Unix socket shared with the engine and disables TCP;
+  its socket DSN passed the focused Rust parser test. MinIO remote storage
+  settings rendered into pageserver and safekeeper configs locally.
+- The Dockerfile now builds pgvector for PostgreSQL 14–17 and includes both
+  Briven control binaries. A tag-triggered workflow is prepared to publish an
+  immutable Sprint 3 image, and Compose requires that verified tag. No image
+  build has run.
 
 The engine proof used a disposable local engine directory. The organization
 isolation proof and key lifecycle check used disposable local PostgreSQL. No production
@@ -101,12 +109,12 @@ database or customer data was touched.
   endpoint. The branch must not serve public engine-backed projects yet.
 - Build and verify the private engine image before installing the back room.
   A registry manifest check for `ghcr.io/flndrn-dev/briven-engine:latest` was
-  denied from this machine. The checked-in generic Dockerfile had not included
-  `briven_local` or `briven_control_api`; the source change is unbuilt. The
-  private Compose has not been started.
-- Wire the private MinIO service into pageserver and safekeeper remote storage,
-  then prove backup and restore. The current three-safekeeper config persists
-  local data on a named volume but does not yet configure remote object storage.
+  denied from this machine, and the package was not found by the GitHub API.
+  The source and workflow changes are unbuilt. The private Compose has not
+  been started.
+- Prove the private MinIO remote storage and backup/restore in a running image.
+  The local engine config now renders S3 settings for the pageserver and all
+  three safekeepers, but no process has connected to MinIO from Docker yet.
 - Add catalog backup and reconciliation. Remote PostgreSQL connections use
   verified TLS. Existing JSON data has no automatic migration.
 - Add hosted recovery for partial provisioning beyond the local same-name resume,

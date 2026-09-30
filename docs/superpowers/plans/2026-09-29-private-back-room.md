@@ -12,7 +12,11 @@
 
 The checked-in files now use `local-env.toml` with three safekeepers and disk sync enabled. `briven_local init` without a config creates only one safekeeper. The startup script uses `--force empty-dir-ok` because it creates the mounted data directory first. `briven_local start` already starts the broker, controller, pageserver, and safekeepers, so separate broker/controller starts in the original Task 2 snippet would make `set -e` exit on an already-running process. Follow the checked-in files and `check-compose.sh` for Tasks 1–2; the older snippets below are a record of the initial draft.
 
-The private image and object-storage configuration still need a live proof. The generic Dockerfile now builds and copies the two Briven control binaries, but no image or private room has been deployed.
+The private image and object-storage configuration still need a live proof. The generic Dockerfile now builds and copies the two Briven control binaries. The local init renders MinIO S3 settings for the pageserver and all three safekeepers, but no image or private room has been deployed.
+
+The catalog now listens only on a shared Unix socket. The engine uses that socket; this satisfies the control API's local transport rule without turning off its verified TLS requirement for remote catalog hosts. The Compose waits for the bucket creator to finish and for the catalog healthcheck before starting the engine.
+
+An image build workflow at `.github/workflows/sprint3-private-engine-image.yml` runs only when a `sprint3-engine-*` tag is pushed. The Compose requires the verified tag in `BRIVEN_ENGINE_TAG`; it does not use `latest`. Building and publishing the image still need a separate review and tag push.
 
 ## Global Constraints
 

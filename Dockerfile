@@ -99,6 +99,17 @@ COPY --chown=nonroot . .
 COPY --chown=nonroot --from=plan     /home/nonroot/proxy/Cargo.toml         proxy/Cargo.toml
 COPY --chown=nonroot --from=plan     /home/nonroot/Cargo.lock               Cargo.lock
 
+# Customer computes require pgvector before project creation can report ready.
+# Build for each PostgreSQL version shipped in this image. Empty OPTFLAGS keeps
+# the extension portable across the host CPUs that may run the compute.
+RUN set -e \
+    && git clone --depth 1 --branch v0.8.6 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && for version in 14 15 16 17; do \
+         make -C /tmp/pgvector clean PG_CONFIG="/home/nonroot/pg_install/v${version}/bin/pg_config"; \
+         make -C /tmp/pgvector OPTFLAGS="" PG_CONFIG="/home/nonroot/pg_install/v${version}/bin/pg_config"; \
+         make -C /tmp/pgvector install PG_CONFIG="/home/nonroot/pg_install/v${version}/bin/pg_config"; \
+       done
+
 RUN  --mount=type=secret,uid=1000,id=SUBZERO_ACCESS_TOKEN \
     set -e \
     && if [ -s /run/secrets/SUBZERO_ACCESS_TOKEN ]; then \

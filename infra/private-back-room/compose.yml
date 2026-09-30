@@ -39,31 +39,43 @@ services:
 
   catalog:
     image: postgres:16
+    command: ["postgres", "-c", "listen_addresses="]
     environment:
       POSTGRES_USER: briven_catalog
       POSTGRES_PASSWORD: ${BRIVEN_CONTROL_DB_PASSWORD:?set in the Dokploy panel}
       POSTGRES_DB: briven_control
     volumes:
       - briven-back-room-catalog:/var/lib/postgresql/data
+      - briven-back-room-catalog-socket:/var/run/postgresql
     networks:
       - briven-back-room
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U briven_catalog -d briven_control"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   engine:
-    image: ghcr.io/flndrn-dev/briven-engine:${BRIVEN_ENGINE_TAG:-latest}
+    image: ghcr.io/flndrn-dev/briven-engine:${BRIVEN_ENGINE_TAG:?set the verified sprint3-engine image tag in the Dokploy panel}
     depends_on:
-      - minio-init
-      - catalog
+      minio-init:
+        condition: service_completed_successfully
+      catalog:
+        condition: service_healthy
     environment:
       BRIVEN_ENV: production
       BRIVEN_REPO_DIR: /var/lib/briven
       BRIVEN_CONTROL_API_BIND: 0.0.0.0:8787
       BRIVEN_CONTROL_IDENTITY_SECRET: ${BRIVEN_CONTROL_IDENTITY_SECRET:?set in the Dokploy panel}
-      BRIVEN_CONTROL_DATABASE_URL: postgres://briven_catalog:${BRIVEN_CONTROL_DB_PASSWORD:?set in the Dokploy panel}@catalog:5432/briven_control
+      BRIVEN_CONTROL_DATABASE_URL: postgres://briven_catalog:${BRIVEN_CONTROL_DB_PASSWORD:?set a URL-safe value in the Dokploy panel}@/briven_control?host=/var/run/postgresql
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in the Dokploy panel}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in the Dokploy panel}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set in the Dokploy panel}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set in the Dokploy panel}
     volumes:
       - briven-back-room-data:/var/lib/briven
+      - briven-back-room-catalog-socket:/var/run/postgresql:ro
       - ./start-private.sh:/start-private.sh:ro
       - ./local-env.toml:/local-env.toml:ro
     command: ["/bin/sh", "/start-private.sh"]
@@ -78,4 +90,5 @@ networks:
 volumes:
   briven-back-room-minio:
   briven-back-room-catalog:
+  briven-back-room-catalog-socket:
   briven-back-room-data:

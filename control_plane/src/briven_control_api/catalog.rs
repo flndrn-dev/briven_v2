@@ -323,6 +323,11 @@ mod tests {
     fn hosted_catalog_dsn_is_accepted_for_verified_tls_connections() {
         assert!(validate_catalog_dsn("postgresql://localhost/briven").is_ok());
         assert!(validate_catalog_dsn("postgresql://db.example.com/briven").is_ok());
+        let socket: tokio_postgres::Config =
+            "postgresql://briven_catalog:password@/briven_control?host=/var/run/postgresql"
+                .parse()
+                .unwrap();
+        assert!(matches!(socket.get_hosts(), [tokio_postgres::config::Host::Unix(_)]));
         assert!(validate_catalog_dsn("not a PostgreSQL connection string").is_err());
     }
 
