@@ -8,6 +8,12 @@
 
 **Tech Stack:** Engine image `ghcr.io/flndrn-dev/briven-engine`, `briven_local`, `briven_control_api`, Bitnami MinIO images named in `.deploy.md`, a private PostgreSQL catalog, Docker Compose with `internal: true`. No Kubernetes. No second machine.
 
+## Startup correction (2026-09-30)
+
+The checked-in files now use `local-env.toml` with three safekeepers and disk sync enabled. `briven_local init` without a config creates only one safekeeper. The startup script uses `--force empty-dir-ok` because it creates the mounted data directory first. `briven_local start` already starts the broker, controller, pageserver, and safekeepers, so separate broker/controller starts in the original Task 2 snippet would make `set -e` exit on an already-running process. Follow the checked-in files and `check-compose.sh` for Tasks 1–2; the older snippets below are a record of the initial draft.
+
+The private image and object-storage configuration still need a live proof. The generic Dockerfile now builds and copies the two Briven control binaries, but no image or private room has been deployed.
+
 ## Global Constraints
 
 - Customer databases live on the Briven engine, on the same computer that already serves briven.tech (`187.77.183.190`), in a private back room. The website stays the public shop window.

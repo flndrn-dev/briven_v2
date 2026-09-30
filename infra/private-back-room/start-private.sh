@@ -14,9 +14,7 @@ export BRIVEN_CONTROL_API_BIND=0.0.0.0:8787
 export BRIVEN_LOCAL_BIN="${BRIVEN_LOCAL_BIN:-briven_local}"
 mkdir -p "$BRIVEN_REPO_DIR"
 if [ -z "$(ls -A "$BRIVEN_REPO_DIR" 2>/dev/null || true)" ]; then
-  briven_local init
+  briven_local init --config /local-env.toml --force empty-dir-ok
 fi
 briven_local start
-briven_local storage-controller start
-briven_local storage-broker start
 exec briven_control_api

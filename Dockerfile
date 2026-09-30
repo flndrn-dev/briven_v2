@@ -190,6 +190,8 @@ RUN mkdir -p /data/.neon/ && \
   > /data/.neon/pageserver.toml && \
   chown -R neon:neon /data/.neon
 
+RUN mkdir -p /var/lib/briven && chown neon:neon /var/lib/briven
+
 VOLUME ["/data"]
 USER neon
 EXPOSE 6400

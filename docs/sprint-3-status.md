@@ -74,6 +74,10 @@ not ready to switch production traffic to the v2 engine.
 - The private-room Compose check still passes. The engine Dockerfile now includes
   the Briven local CLI and control API in its build and runtime stages. That
   image has not been built or verified.
+- A disposable local initialization of the private-room config produced three
+  safekeeper definitions. Startup now uses that config, enables disk sync, and
+  calls the single `briven_local start` operation that starts the broker,
+  controller, pageserver, and safekeepers. It has not been started in Docker.
 
 The engine proof used a disposable local engine directory. The organization
 isolation proof and key lifecycle check used disposable local PostgreSQL. No production
@@ -100,6 +104,9 @@ database or customer data was touched.
   denied from this machine. The checked-in generic Dockerfile had not included
   `briven_local` or `briven_control_api`; the source change is unbuilt. The
   private Compose has not been started.
+- Wire the private MinIO service into pageserver and safekeeper remote storage,
+  then prove backup and restore. The current three-safekeeper config persists
+  local data on a named volume but does not yet configure remote object storage.
 - Add catalog backup and reconciliation. Remote PostgreSQL connections use
   verified TLS. Existing JSON data has no automatic migration.
 - Add hosted recovery for partial provisioning beyond the local same-name resume,

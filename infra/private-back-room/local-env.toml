@@ -1,0 +1,42 @@
+pg_distrib_dir = "/usr/local"
+neon_distrib_dir = "/usr/local/bin"
+default_tenant_id = "00000000000000000000000000000000"
+control_plane_api = "http://127.0.0.1:1234/upcall/v1/"
+generate_local_ssl_certs = false
+
+[broker]
+listen_addr = "127.0.0.1:50051"
+
+[storage_controller]
+timelines_onto_safekeepers = true
+
+[endpoint_storage]
+listen_addr = "127.0.0.1:9993"
+
+[[pageservers]]
+id = 1
+listen_pg_addr = "127.0.0.1:64000"
+listen_http_addr = "127.0.0.1:9898"
+listen_grpc_addr = "127.0.0.1:64001"
+pg_auth_type = "Trust"
+http_auth_type = "Trust"
+grpc_auth_type = "Trust"
+no_sync = false
+
+[[safekeepers]]
+id = 1
+pg_port = 5454
+http_port = 7676
+sync = true
+
+[[safekeepers]]
+id = 2
+pg_port = 5455
+http_port = 7677
+sync = true
+
+[[safekeepers]]
+id = 3
+pg_port = 5456
+http_port = 7678
+sync = true

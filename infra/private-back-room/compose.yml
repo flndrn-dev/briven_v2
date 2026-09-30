@@ -65,6 +65,7 @@ services:
     volumes:
       - briven-back-room-data:/var/lib/briven
       - ./start-private.sh:/start-private.sh:ro
+      - ./local-env.toml:/local-env.toml:ro
     command: ["/bin/sh", "/start-private.sh"]
     networks:
       - briven-back-room

@@ -3,8 +3,10 @@ set -eu
 cd "$(dirname "$0")/../.."
 file=infra/private-back-room/compose.yml
 start=infra/private-back-room/start-private.sh
+config=infra/private-back-room/local-env.toml
 test -f "$file"
 test -f "$start"
+test -f "$config"
 if grep -nE '^[[:space:]]*ports:' "$file"; then
   echo "refusing published ports" >&2
   exit 1
@@ -28,8 +30,10 @@ fi
 grep -q 'bitnamilegacy/minio:latest' "$file"
 grep -q 'bitnamilegacy/minio-client:latest' "$file"
 grep -q 'internal: true' "$file"
-grep -q 'briven_local init' "$start"
+grep -q 'briven_local init --config /local-env.toml --force empty-dir-ok' "$start"
 grep -q 'briven_local start' "$start"
-grep -q 'briven_local storage-controller start' "$start"
+test "$(grep -c '^\[\[safekeepers\]\]' "$config")" -eq 3
+grep -q 'no_sync = false' "$config"
+grep -q './local-env.toml:/local-env.toml:ro' "$file"
 grep -q 'briven_control_api' "$start"
 echo "private room file is closed"
