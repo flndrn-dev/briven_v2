@@ -88,6 +88,7 @@ services:
       - ./start-private.sh:/start-private.sh:ro
       - ./local-env.toml:/local-env.toml:ro
     command: ["/bin/sh", "/start-private.sh"]
+    stop_grace_period: 60s
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8787/healthz >/dev/null"]
       interval: 10s
