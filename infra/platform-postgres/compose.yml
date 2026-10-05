@@ -1,0 +1,97 @@
+# Fresh private platform databases. No live volumes, imported accounts or public ports.
+name: briven-platform-databases
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  certificates:
+    # This immutable image was inspected on KVM2 and includes OpenSSL.
+    image: ghcr.io/flndrn-dev/briven-engine@sha256:6cdb74d55027d0ae47d4c4137efbe4bdfb07332a24912691201bf1b4a4d277cc
+    user: '0:0'
+    entrypoint: ['/bin/sh', '/create-certificates.sh']
+    volumes:
+      - ./create-certificates.sh:/create-certificates.sh:ro
+      - ca_private:/ca-private
+      - ca_public:/ca-public
+      - control_tls:/control-tls
+      - auth_tls:/auth-tls
+    networks: [private]
+    restart: 'no'
+
+  control-db:
+    image: postgres:17
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      certificates:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: briven_control_admin
+      POSTGRES_PASSWORD: ${BRIVEN_CONTROL_DB_ADMIN_PASSWORD:?set independent control administrator password}
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256'
+      BRIVEN_DB_APP_USER: briven_dashboard
+      BRIVEN_DB_APP_PASSWORD: ${BRIVEN_CONTROL_DB_APP_PASSWORD:?set control application password}
+      BRIVEN_DB_APP_NAME: briven_dashboard
+    command: ['postgres', '-c', 'ssl=on', '-c', 'ssl_cert_file=/etc/briven/tls/server.crt', '-c', 'ssl_key_file=/etc/briven/tls/server.key', '-c', 'password_encryption=scram-sha-256', '-c', 'fsync=on', '-c', 'synchronous_commit=on']
+    volumes:
+      - control_data:/var/lib/postgresql/data
+      - control_tls:/etc/briven/tls:ro
+      - ca_public:/etc/briven/db-ca:ro
+      - ./initialize-database.sh:/docker-entrypoint-initdb.d/10-application.sh:ro
+    networks:
+      private:
+        aliases: [briven-control-db]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U briven_control_admin -d postgres']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  auth-db:
+    image: postgres:17
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      certificates:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: briven_auth_admin
+      POSTGRES_PASSWORD: ${BRIVEN_AUTH_DB_ADMIN_PASSWORD:?set independent Auth administrator password}
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256'
+      BRIVEN_DB_APP_USER: briven_auth
+      BRIVEN_DB_APP_PASSWORD: ${BRIVEN_AUTH_DB_APP_PASSWORD:?set Auth application password}
+      BRIVEN_DB_APP_NAME: briven_auth
+    command: ['postgres', '-c', 'ssl=on', '-c', 'ssl_cert_file=/etc/briven/tls/server.crt', '-c', 'ssl_key_file=/etc/briven/tls/server.key', '-c', 'password_encryption=scram-sha-256', '-c', 'fsync=on', '-c', 'synchronous_commit=on']
+    volumes:
+      - auth_data:/var/lib/postgresql/data
+      - auth_tls:/etc/briven/tls:ro
+      - ca_public:/etc/briven/db-ca:ro
+      - ./initialize-database.sh:/docker-entrypoint-initdb.d/10-application.sh:ro
+    networks:
+      private:
+        aliases: [briven-auth-db]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U briven_auth_admin -d postgres']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+networks:
+  private:
+    internal: true
+
+volumes:
+  control_data:
+  auth_data:
+  control_tls:
+  auth_tls:
+  ca_private:
+  ca_public:
