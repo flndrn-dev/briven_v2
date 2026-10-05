@@ -149,6 +149,34 @@ impl Catalog {
         }
     }
 
+    /// Internal proxy lookup only: never expose unscoped catalog results to
+    /// customer API handlers.
+    pub async fn ready_project(&self, id: &str) -> Result<Option<Project>> {
+        match self {
+            Self::Local(repo) => Ok(load_local(repo)?
+                .projects
+                .into_iter()
+                .find(|project| project.id == id && matches!(project.state, ProjectState::Ready))),
+            Self::Postgres(dsn) => {
+                let client = pg_client(dsn).await?;
+                Ok(client
+                    .query_opt(
+                        "SELECT id, name, main_branch_id, organization_id
+                     FROM briven_control.projects WHERE id = $1 AND state = 'ready'",
+                        &[&id],
+                    )
+                    .await?
+                    .map(|row| Project {
+                        id: row.get(0),
+                        name: row.get(1),
+                        main_branch_id: row.get(2),
+                        organization_id: row.get(3),
+                        state: ProjectState::Ready,
+                    }))
+            }
+        }
+    }
+
     pub async fn set_state(&self, organization: &str, id: &str, state: ProjectState) -> Result<()> {
         match self {
             Self::Local(repo) => {
@@ -327,7 +355,10 @@ mod tests {
             "postgresql://briven_catalog:password@/briven_control?host=/var/run/postgresql"
                 .parse()
                 .unwrap();
-        assert!(matches!(socket.get_hosts(), [tokio_postgres::config::Host::Unix(_)]));
+        assert!(matches!(
+            socket.get_hosts(),
+            [tokio_postgres::config::Host::Unix(_)]
+        ));
         assert!(validate_catalog_dsn("not a PostgreSQL connection string").is_err());
     }
 

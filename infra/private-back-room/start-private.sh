@@ -30,8 +30,13 @@ awk '!/^[[:space:]]*(fsync|shared_preload_libraries)[[:space:]]*=/' "$settings" 
 printf "fsync = on\nshared_preload_libraries = 'neon_rmgr'\n" >> "$settings.new"
 mv "$settings.new" "$settings"
 api_pid=
+proxy_pid=
 shutdown() {
   trap - EXIT INT TERM
+  if [ -n "$proxy_pid" ]; then
+    kill "$proxy_pid" 2>/dev/null || true
+    wait "$proxy_pid" 2>/dev/null || true
+  fi
   if [ -n "$api_pid" ]; then
     kill "$api_pid" 2>/dev/null || true
     wait "$api_pid" 2>/dev/null || true
@@ -49,4 +54,17 @@ controller_psql=/usr/local/v16/bin/psql
 test "$("$controller_psql" -X -At -h 127.0.0.1 -p 1235 -U neon -d storage_controller -c 'SHOW fsync')" = on
 briven_control_api &
 api_pid=$!
-wait "$api_pid"
+# The proxy runs in this namespace so customer computes remain loopback-only.
+proxy --auth-backend control-plane --auth-endpoint http://127.0.0.1:8787/proxy/ \
+  --proxy 0.0.0.0:5432 --mgmt 127.0.0.1:7000 --http 127.0.0.1:7001 \
+  --tls-key /etc/briven/proxy-tls/server.key --tls-cert /etc/briven/proxy-tls/server.crt \
+  --project-info-cache size=0 --wake-compute-cache size=0 &
+proxy_pid=$!
+while kill -0 "$api_pid" 2>/dev/null && kill -0 "$proxy_pid" 2>/dev/null; do
+  sleep 2
+done
+if kill -0 "$api_pid" 2>/dev/null; then
+  wait "$proxy_pid"
+else
+  wait "$api_pid"
+fi

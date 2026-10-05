@@ -25,6 +25,14 @@
 - [x] Write/run the closed-network check before the Compose exists; require nonzero exit.
 - [x] Add idempotent CA/certificate provisioning, SCRAM application roles and TLS-only host rules.
 - [x] Run shell syntax and the closed-network Compose check. Commit/push only these files and this plan; actual Docker rendering is also checked by Dokploy before deployment.
-- [ ] Create a separate Dokploy Compose using this repository/branch/path, generate its independent keys and deploy.
-- [ ] Verify both services, application role login with hostname-verified TLS, plaintext/wrong-password/cross-database refusal and no published ports.
-- [ ] Dump a synthetic probe, restore it into a temporary database, verify the row, and record proof before preparing the website.
+- [x] Create a separate Dokploy Compose using this repository/branch/path, generate its independent keys and deploy.
+- [x] Verify both services, application role login with hostname-verified TLS, plaintext/wrong-password/cross-database refusal and no published ports.
+- [x] Dump a synthetic probe, restore it into a temporary database, verify the row, and record proof before preparing the website.
+
+## Server evidence, 5 October
+
+Dokploy Compose `MBN19Ju_F2Ll31fwuMXrm` (`briven-platform-databases`) is running on KVM2, Briven/production. Deployment `EoXVu5Bht0PJch0p08sMq` completed. Both PostgreSQL 17 services are healthy, with separate storage and no published ports.
+
+The server proof verified hostname/CA-checked application login, wrong-password rejection, plaintext rejection, cross-database rejection and refusal of application access to the administrator database. For each service it wrote a synthetic row, dumped it, restored into a temporary database and verified the exact row. A failed transaction left no partial table. Temporary databases/probe tables were removed. Proof dump files remain root-only under `/var/backups/briven-platform-20261005/`.
+
+These are fresh bare databases: website/Auth schemas and the new owner account are still pending. This proves database restoration, not a complete website or customer-engine backup.

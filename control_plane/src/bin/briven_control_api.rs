@@ -28,6 +28,8 @@ mod auth;
 mod catalog;
 #[path = "../briven_control_api/customer_credential.rs"]
 mod customer_credential;
+#[path = "../briven_control_api/proxy_control.rs"]
+mod proxy_control;
 
 use auth::{AuthConfig, Principal};
 use catalog::{Catalog, CreateError, Project, ProjectState};
@@ -37,6 +39,7 @@ struct AppState {
     repo: PathBuf,
     cli: PathBuf,
     auth: Arc<AuthConfig>,
+    proxy_auth: Arc<proxy_control::ProxyAuth>,
     catalog: Catalog,
     gate: Arc<Mutex<()>>,
 }
@@ -148,6 +151,7 @@ fn project<'a>(projects: &'a [Project], id: &str) -> ApiResult<&'a Project> {
 
 async fn run_cli(state: &AppState, args: &[&str]) -> ApiResult<()> {
     let output = Command::new(&state.cli)
+        .kill_on_drop(true)
         .args(args)
         .env("BRIVEN_REPO_DIR", &state.repo)
         .output()
@@ -667,8 +671,12 @@ async fn get_connection(
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(5432);
         let proxy_host_set = customer_credential::valid_proxy_host(&host) && port != 0;
-        match customer_credential::connection_gate(true, principal.can_write(), proxy_host_set, true)
-        {
+        match customer_credential::connection_gate(
+            true,
+            principal.can_write(),
+            proxy_host_set,
+            true,
+        ) {
             customer_credential::ConnectionGate::Forbidden => {
                 return Err(ApiError(
                     StatusCode::FORBIDDEN,
@@ -716,16 +724,20 @@ async fn get_connection(
         let plane = ComputeControlPlane::load(env).map_err(engine)?;
         let endpoint = plane
             .endpoints
-            .values()
-            .find(|endpoint| {
-                endpoint.tenant_id == tenant_id
-                    && endpoint.timeline_id == timeline_id
-                    && endpoint.status() == EndpointStatus::Running
+            .iter()
+            .find(|(_, endpoint)| {
+                endpoint.tenant_id == tenant_id && endpoint.timeline_id == timeline_id
             })
             .ok_or(ApiError(
                 StatusCode::CONFLICT,
                 "branch has no running compute",
             ))?;
+        let (endpoint_id, endpoint) = endpoint;
+        let endpoint = if endpoint.status() != EndpointStatus::Running {
+            proxy_control::endpoint(&state, endpoint_id).await?
+        } else {
+            Arc::clone(endpoint)
+        };
         let admin_uri = endpoint.connstr("cloud_admin", "postgres");
         if !can_query(&admin_uri).await {
             return Err(ApiError(
@@ -738,21 +750,24 @@ async fn get_connection(
             .map_err(internal)?
             .as_secs();
         let password = customer_credential::random_customer_password();
-        let credential = customer_credential::issue_customer_credential(&id, "postgres", &password, now)
-            .ok_or(ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "control API operation failed",
-            ))?;
+        let credential = customer_credential::issue_customer_credential(
+            &id, "postgres", &password, now,
+        )
+        .ok_or(ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "control API operation failed",
+        ))?;
         if !customer_credential::credential_opens_project(&credential.role, &id) {
             return Err(ApiError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "control API operation failed",
             ));
         }
-        let statements = customer_credential::customer_role_statements(&credential).ok_or(ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "control API operation failed",
-        ))?;
+        let statements =
+            customer_credential::customer_role_statements(&credential).ok_or(ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "control API operation failed",
+            ))?;
         apply_customer_role(&admin_uri, &statements).await?;
         let uri = customer_credential::customer_uri(
             &credential.role,
@@ -761,6 +776,7 @@ async fn get_connection(
             port,
             "postgres",
         )
+        .and_then(|uri| customer_credential::with_endpoint_hint(&uri, endpoint_id))
         .filter(|uri| customer_credential::publishable_customer_uri(uri))
         .ok_or(ApiError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -843,11 +859,17 @@ async fn main() -> Result<()> {
         repo,
         cli,
         auth,
+        proxy_auth: Arc::new(proxy_control::ProxyAuth::from_env()?),
         catalog,
         gate: Arc::new(Mutex::new(())),
     };
     let app = Router::new()
         .route("/healthz", get(health))
+        .route(
+            "/proxy/get_endpoint_access_control",
+            get(proxy_control::access_control),
+        )
+        .route("/proxy/wake_compute", get(proxy_control::wake_compute))
         .route("/v1/projects", get(list_projects).post(create_project))
         .route("/v1/projects/{id}", get(get_project))
         .route(
@@ -872,7 +894,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{existing_name, valid_name, ExistingName, ProjectState};
+    use super::{ExistingName, ProjectState, existing_name, valid_name};
 
     #[test]
     fn names_cannot_escape_cli_or_collide_with_paths() {

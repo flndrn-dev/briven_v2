@@ -72,3 +72,13 @@ No deploy action or production configuration change was made. Finish the private
 The owner explicitly authorized all six installation, proof and eventual cutover steps, using the existing Dokploy project and server credentials. The current deployment target was revalidated as KVM2 (`187.77.183.190`) with 125 GB free disk and about 12 GB available memory; the live website containers are healthy. Dokploy's connected GitHub provider sees the engine repository and rebuild branch. The closed-room Compose check passes.
 
 The original immutable image was pulled and its digest matches the recorded value. An isolated runtime inspection confirms PostgreSQL 17, pgvector and the control/storage binaries, with no missing linked libraries in the checked executables. It also exposed a packaging defect: `briven_local` starts computes through `compute_ctl`, but the Dockerfile neither built nor copied that binary. The Dockerfile now includes it and verifies its executable startup during the build. This is a source correction before private installation, not a workaround that removes compute or isolation checks.
+
+## Private server proof now completed
+
+Image `sprint3-engine-20261005-2`, digest `sha256:0748221061eeae28fd97ebe397f6616e8732010d21d2193b84f31f04bd9e9081`, includes a working `compute_ctl`. Dokploy installed `briven-private-engine` (`oHqosY_Obr_7ZRr-OnLSR`) on the approved KVM2 target, with dedicated storage and no public ports. Startup now configures fsync before launch, preloads `neon_rmgr` so the bundled PostgreSQL can recover its WAL, resolves the control CLI by absolute path, and stops the engine gracefully.
+
+The actual server proof passed engine health, three running safekeepers, controller fsync, missing/expired identity refusal, viewer write refusal, duplicate project refusal and organization isolation. Two synthetic projects reached ready: `private-test` and `isolation-test`. Customer connection issuance deliberately remains closed until the TLS proxy is installed and proved. This is not yet customer connection, restart or restore acceptance.
+
+Fresh dashboard and Auth PostgreSQL 17 instances also passed hostname-verified TLS, restricted role/access checks and a synthetic dump/restore drill; see [platform PostgreSQL evidence](2026-10-05-private-platform-postgres.md). No old accounts or customer data were copied. Website schema setup, fresh owner creation, API/runtime/realtime engine routing and public cutover remain pending. The live website has not been switched.
+
+The secure customer connection adapter and subsequent tests are tracked in [the private proxy plan](2026-10-05-private-proxy-routing.md).

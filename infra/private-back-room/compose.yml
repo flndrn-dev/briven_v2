@@ -9,6 +9,17 @@ x-logging: &briven-logging
     max-file: '3'
 
 services:
+  proxy-certificates:
+    image: ghcr.io/flndrn-dev/briven-engine@sha256:0748221061eeae28fd97ebe397f6616e8732010d21d2193b84f31f04bd9e9081
+    user: '0:0'
+    entrypoint: ['/bin/sh', '/create-proxy-certificates.sh']
+    volumes:
+      - ./create-proxy-certificates.sh:/create-proxy-certificates.sh:ro
+      - briven-proxy-ca-private:/ca-private
+      - briven-proxy-ca-public:/ca-public
+      - briven-proxy-tls:/proxy-tls
+    networks: [briven-back-room]
+    restart: 'no'
   minio:
     logging: *briven-logging
     image: bitnamilegacy/minio:latest
@@ -68,6 +79,8 @@ services:
     logging: *briven-logging
     image: ghcr.io/flndrn-dev/briven-engine:${BRIVEN_ENGINE_TAG:?set the verified sprint3-engine image tag in the Dokploy panel}
     depends_on:
+      proxy-certificates:
+        condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
       catalog:
@@ -77,6 +90,10 @@ services:
       BRIVEN_REPO_DIR: /var/lib/briven
       BRIVEN_CONTROL_API_BIND: 0.0.0.0:8787
       BRIVEN_CONTROL_IDENTITY_SECRET: ${BRIVEN_CONTROL_IDENTITY_SECRET:?set in the Dokploy panel}
+      BRIVEN_PROXY_CONTROL_SECRET: ${BRIVEN_PROXY_CONTROL_SECRET:?set independent proxy control secret}
+      NEON_PROXY_TO_CONTROLPLANE_TOKEN: ${BRIVEN_PROXY_CONTROL_SECRET:?set independent proxy control secret}
+      BRIVEN_CUSTOMER_PROXY_HOST: briven-customer-db
+      BRIVEN_CUSTOMER_PROXY_PORT: '5432'
       BRIVEN_CONTROL_DATABASE_URL: postgres://briven_catalog:${BRIVEN_CONTROL_DB_PASSWORD:?set a URL-safe value in the Dokploy panel}@/briven_control?host=/var/run/postgresql
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in the Dokploy panel}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in the Dokploy panel}
@@ -87,16 +104,19 @@ services:
       - briven-back-room-catalog-socket:/var/run/postgresql:ro
       - ./start-private.sh:/start-private.sh:ro
       - ./local-env.toml:/local-env.toml:ro
+      - briven-proxy-tls:/etc/briven/proxy-tls:ro
+      - briven-proxy-ca-public:/etc/briven/proxy-ca:ro
     command: ["/bin/sh", "/start-private.sh"]
     stop_grace_period: 60s
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8787/healthz >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8787/healthz >/dev/null && curl -fsS http://127.0.0.1:7001/v1/status >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 12
       start_period: 60s
     networks:
-      - briven-back-room
+      briven-back-room:
+        aliases: [briven-customer-db]
     restart: unless-stopped
 
 networks:
@@ -104,6 +124,9 @@ networks:
     internal: true
 
 volumes:
+  briven-proxy-ca-private:
+  briven-proxy-ca-public:
+  briven-proxy-tls:
   briven-back-room-minio:
   briven-back-room-catalog:
   briven-back-room-catalog-socket:

@@ -85,7 +85,9 @@ pub fn customer_door_accepts(role: &str) -> bool {
         return false;
     };
     (8..=48).contains(&body.len())
-        && body.chars().all(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
+        && body
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
         && role.len() <= 63
 }
 
@@ -97,9 +99,15 @@ pub fn valid_proxy_host(host: &str) -> bool {
     let bytes = host.as_bytes();
     (1..=253).contains(&bytes.len())
         && !host.contains("..")
-        && bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'.' || *byte == b'-')
-        && bytes.first().is_some_and(|byte| byte.is_ascii_alphanumeric())
-        && bytes.last().is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'.' || *byte == b'-')
+        && bytes
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && bytes
+            .last()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
 }
 
 pub fn customer_uri(
@@ -109,7 +117,11 @@ pub fn customer_uri(
     port: u16,
     database: &str,
 ) -> Option<String> {
-    if !customer_door_accepts(role) || !is_hex64(password) || !valid_proxy_host(host) || !safe_ident(database) {
+    if !customer_door_accepts(role)
+        || !is_hex64(password)
+        || !valid_proxy_host(host)
+        || !safe_ident(database)
+    {
         return None;
     }
     Some(format!(
@@ -124,13 +136,35 @@ pub fn publishable_customer_uri(uri: &str) -> bool {
         && uri.starts_with("postgresql://briven_")
 }
 
-pub fn customer_role_statements(credential: &CustomerCredential) -> Option<Vec<String>> {
-    if !customer_door_accepts(&credential.role) || !is_hex64(&credential.password) || !safe_ident(&credential.database) {
+/// The inherited proxy needs an explicit endpoint when several customer
+/// computes share one TLS hostname. PostgreSQL startup options carry that ID.
+pub fn with_endpoint_hint(uri: &str, endpoint_id: &str) -> Option<String> {
+    if !(4..=100).contains(&endpoint_id.len())
+        || !endpoint_id.starts_with("ep-")
+        || !endpoint_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
         return None;
     }
-    if !credential.valid_until.chars().all(|character| {
-        character.is_ascii_digit() || matches!(character, '-' | ' ' | ':' | '+')
-    }) {
+    let mut url = url::Url::parse(uri).ok()?;
+    url.query_pairs_mut()
+        .append_pair("options", &format!("endpoint={endpoint_id}"));
+    Some(url.to_string())
+}
+
+pub fn customer_role_statements(credential: &CustomerCredential) -> Option<Vec<String>> {
+    if !customer_door_accepts(&credential.role)
+        || !is_hex64(&credential.password)
+        || !safe_ident(&credential.database)
+    {
+        return None;
+    }
+    if !credential
+        .valid_until
+        .chars()
+        .all(|character| character.is_ascii_digit() || matches!(character, '-' | ' ' | ':' | '+'))
+    {
         return None;
     }
     let role = &credential.role;
@@ -152,7 +186,9 @@ pub fn role_already_exists(sqlstate: &str) -> bool {
 
 fn is_hex64(password: &str) -> bool {
     password.len() == 64
-        && password.chars().all(|character| matches!(character, '0'..='9' | 'a'..='f'))
+        && password
+            .chars()
+            .all(|character| matches!(character, '0'..='9' | 'a'..='f'))
 }
 
 fn safe_ident(name: &str) -> bool {
@@ -162,7 +198,9 @@ fn safe_ident(name: &str) -> bool {
         _ => return false,
     }
     (1..=63).contains(&name.len())
-        && name.chars().all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_')
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,9 +235,9 @@ pub fn connection_gate(
 #[cfg(test)]
 mod tests {
     use super::{
-        credential_opens_project, customer_door_accepts, customer_role_name,
-        customer_role_statements, customer_uri, issue_customer_credential, publishable_customer_uri,
-        role_already_exists, valid_proxy_host, valid_until_utc, CUSTOMER_KEY_SECONDS,
+        CUSTOMER_KEY_SECONDS, credential_opens_project, customer_door_accepts, customer_role_name,
+        customer_role_statements, customer_uri, issue_customer_credential,
+        publishable_customer_uri, role_already_exists, valid_proxy_host, valid_until_utc,
     };
 
     const PASSWORD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -216,8 +254,14 @@ mod tests {
         assert_eq!(issued.password, PASSWORD);
         assert_eq!(issued.database, "postgres");
         assert_eq!(issued.valid_until, valid_until_utc(1_700_000_000 + 900));
-        let uri = customer_uri(&issued.role, &issued.password, "db.internal", 5432, "postgres")
-            .expect("uri");
+        let uri = customer_uri(
+            &issued.role,
+            &issued.password,
+            "db.internal",
+            5432,
+            "postgres",
+        )
+        .expect("uri");
         assert_eq!(
             uri,
             "postgresql://briven_a1b2c3d4e5f67890:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@db.internal:5432/postgres?sslmode=require"
@@ -227,15 +271,29 @@ mod tests {
 
     #[test]
     fn customer_credential_refuses_admin_roles() {
-        for role in ["cloud_admin", "postgres", "neon_superuser", "briven_admin", "briven_ab", "BRIVEN_a1b2c3d4", "briven_a1b2c3d4-e", "briven_ABCDEFGH"] {
+        for role in [
+            "cloud_admin",
+            "postgres",
+            "neon_superuser",
+            "briven_admin",
+            "briven_ab",
+            "BRIVEN_a1b2c3d4",
+            "briven_a1b2c3d4-e",
+            "briven_ABCDEFGH",
+        ] {
             assert!(!customer_door_accepts(role), "accepted {role}");
         }
         assert!(customer_door_accepts("briven_a1b2c3d4e5f67890"));
         assert!(customer_role_name("../x").is_none());
-        assert_eq!(customer_role_name("A1B2-C3D4-E5F6-7890").as_deref(), Some("briven_a1b2c3d4e5f67890"));
+        assert_eq!(
+            customer_role_name("A1B2-C3D4-E5F6-7890").as_deref(),
+            Some("briven_a1b2c3d4e5f67890")
+        );
         assert!(customer_role_name("short").is_none());
         assert!(customer_uri("cloud_admin", PASSWORD, "db.internal", 5432, "postgres").is_none());
-        assert!(!publishable_customer_uri("postgresql://cloud_admin:secret@127.0.0.1:5432/postgres?sslmode=disable"));
+        assert!(!publishable_customer_uri(
+            "postgresql://cloud_admin:secret@127.0.0.1:5432/postgres?sslmode=disable"
+        ));
         assert!(!valid_proxy_host("db.internal/evil"));
         assert!(!valid_proxy_host("user@db.internal"));
         assert!(valid_proxy_host("db.internal"));
@@ -252,9 +310,19 @@ mod tests {
         assert!(!credential_opens_project(&issued.role, "bbbbbbbbbbbbbbbb"));
         assert!(!credential_opens_project("cloud_admin", PROJECT));
         let statements = customer_role_statements(&issued).expect("sql");
-        assert!(statements.iter().all(|statement| !statement.contains("cloud_admin")));
-        assert!(statements.iter().any(|statement| statement.contains("VALID UNTIL '1970-01-01 00:15:00+00'")));
-        assert!(statements.iter().any(|statement| statement.contains("GRANT CONNECT ON DATABASE postgres TO briven_a1b2c3d4e5f67890")));
+        assert!(
+            statements
+                .iter()
+                .all(|statement| !statement.contains("cloud_admin"))
+        );
+        assert!(
+            statements
+                .iter()
+                .any(|statement| statement.contains("VALID UNTIL '1970-01-01 00:15:00+00'"))
+        );
+        assert!(statements.iter().any(|statement| {
+            statement.contains("GRANT CONNECT ON DATABASE postgres TO briven_a1b2c3d4e5f67890")
+        }));
         let mut quoted = issued.clone();
         quoted.password = "aa'; drop role postgres; --".to_string();
         // pad check: a non-hex password must produce no SQL
@@ -262,8 +330,35 @@ mod tests {
     }
 
     #[test]
+    fn customer_uri_routes_to_one_registered_endpoint_without_option_injection() {
+        let uri = customer_uri(
+            "briven_a1b2c3d4e5f67890",
+            PASSWORD,
+            "db.internal",
+            5432,
+            "postgres",
+        )
+        .unwrap();
+        let routed = super::with_endpoint_hint(&uri, "ep-a1b2c3d4e5f67890").unwrap();
+        let url = url::Url::parse(&routed).unwrap();
+        assert!(
+            url.query_pairs()
+                .any(|(key, value)| key == "options" && value == "endpoint=ep-a1b2c3d4e5f67890")
+        );
+        for id in [
+            "../main",
+            "ep-a --foo",
+            "ep-a&role=cloud_admin",
+            "other-tenant",
+            "ep-A",
+        ] {
+            assert!(super::with_endpoint_hint(&uri, id).is_none());
+        }
+    }
+
+    #[test]
     fn customer_connection_gate_refuses_viewers_before_a_missing_proxy() {
-        use super::{connection_gate, ConnectionGate};
+        use super::{ConnectionGate, connection_gate};
         assert_eq!(
             connection_gate(true, false, false, true),
             ConnectionGate::Forbidden
@@ -272,7 +367,7 @@ mod tests {
 
     #[test]
     fn customer_connection_gate_stays_unavailable_until_the_proxy_host_is_set() {
-        use super::{connection_gate, ConnectionGate};
+        use super::{ConnectionGate, connection_gate};
         assert_eq!(
             connection_gate(true, true, false, true),
             ConnectionGate::Unavailable
@@ -285,7 +380,7 @@ mod tests {
 
     #[test]
     fn customer_connection_gate_issues_for_a_ready_writer_and_keeps_dev_mode() {
-        use super::{connection_gate, ConnectionGate};
+        use super::{ConnectionGate, connection_gate};
         assert_eq!(
             connection_gate(true, true, true, true),
             ConnectionGate::Issue
