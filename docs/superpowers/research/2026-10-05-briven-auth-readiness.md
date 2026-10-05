@@ -46,12 +46,17 @@ These are static-code findings, not claims of a demonstrated production exploit.
 - Registration base64url-encodes `info.credential.id` again. Installed SimpleWebAuthn types already define that ID as a base64url string; preserving and matching browser IDs needs a regression check.
 - WebAuthn challenge verification, deletion and credential-counter updates are separate queries. Concurrent successful requests need an atomic single-use proof. Finish routes must also reject a challenge from a different requesting project.
 
+## Confirmed login policy
+
+The owner confirmed on 5 October that extra login protection is optional. Briven should recommend it, while allowing people to keep regular authentication. This replaces the earlier proposed progression toward mandatory enrollment; no automatic move to mandatory enrollment is approved.
+
+Users who keep regular authentication should receive recurring email reminders explaining the benefit of two-step verification and linking to setup. The implementation design must define the reminder schedule, avoid duplicate emails, and stop these reminders once the user completes the recommended protection. No reminder email has been sent and no delivery schedule has been activated.
+
 ## Decisions still awaiting the owner
 
-1. Must everyone set up extra login protection, or can people choose? The handoff recommends testing with willing Handlr users before any wider requirement.
-2. Must users prove it is them again before withdrawing money or changing bank details?
-3. Can Face ID/fingerprint take users straight in, with the code app as backup, or must they also enter a code?
-4. Is recovery through emergency codes and a defined recovery process sufficient, or should text messages also be offered?
+1. Must users prove it is them again before withdrawing money or changing bank details?
+2. Can Face ID/fingerprint take users straight in, with the code app as backup, or must they also enter a code?
+3. Is recovery through emergency codes and a defined recovery process sufficient, or should text messages also be offered?
 
 No unanswered choice is treated as approval to enable a policy. Other customer projects must keep their existing requirements during the Handlr pilot.
 
