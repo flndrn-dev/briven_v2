@@ -133,6 +133,7 @@ RUN  --mount=type=secret,uid=1000,id=SUBZERO_ACCESS_TOKEN \
       --bin neon_local \
       --bin briven_local \
       --bin briven_control_api \
+      --bin compute_ctl \
       --bin storage_scrubber \
       --locked --release \
     && mold -run make -j $(nproc) -s neon-pg-ext
@@ -179,6 +180,7 @@ COPY --from=build --chown=neon:neon /home/nonroot/target/release/neon_local     
 COPY --from=build --chown=neon:neon /home/nonroot/target/release/storage_scrubber    /usr/local/bin
 COPY --from=build --chown=neon:neon /home/nonroot/target/release/briven_local        /usr/local/bin
 COPY --from=build --chown=neon:neon /home/nonroot/target/release/briven_control_api  /usr/local/bin
+COPY --from=build --chown=neon:neon /home/nonroot/target/release/compute_ctl         /usr/local/bin
 COPY --from=build /home/nonroot/pg_install/v14 /usr/local/v14/
 COPY --from=build /home/nonroot/pg_install/v15 /usr/local/v15/
 COPY --from=build /home/nonroot/pg_install/v16 /usr/local/v16/
@@ -202,6 +204,12 @@ RUN mkdir -p /data/.neon/ && \
   chown -R neon:neon /data/.neon
 
 RUN mkdir -p /var/lib/briven && chown neon:neon /var/lib/briven
+
+# Fail the image build if the private control plane cannot launch a compute.
+RUN test -x /usr/local/bin/briven_local \
+    && test -x /usr/local/bin/briven_control_api \
+    && test -x /usr/local/bin/compute_ctl \
+    && /usr/local/bin/compute_ctl --help >/dev/null
 
 VOLUME ["/data"]
 USER neon

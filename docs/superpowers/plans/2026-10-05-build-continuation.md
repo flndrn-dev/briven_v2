@@ -23,7 +23,7 @@
 - [x] Inspect the owner record and deployed superadmin allowlist. Verify password login, session, owner profile, admin authorization, and dashboard access. The existing account works; no password reset was needed.
 - [x] Correct the PostgreSQL submodule URLs while retaining the exact pinned commits. Confirm a clean GitHub checkout can fetch them.
 - [x] Build and publish a new immutable engine image. GitHub Actions run `37305069988` succeeded for `sprint3-engine-20261005-1`.
-- [ ] Verify the published image's runtime files and executable dependencies before installing it. Manifest inspection confirms Linux amd64; local runtime inspection cannot run because the Docker daemon is not running.
+- [ ] Verify the published image's runtime files and executable dependencies before installing it. Server inspection found `compute_ctl` missing from image `sprint3-engine-20261005-1`; corrected image build must pass before customer compute proof.
 - [ ] Validate the Dokploy target and create the separate private engine Compose service with dedicated volumes and securely generated settings.
 - [ ] Complete the original private-room startup, catalog backup/rollback, proxy, isolation, and restart checks in order. Record evidence and stop on unresolved failures.
 
@@ -66,3 +66,9 @@ Dokploy still selects server **KVM2**, project **Briven**, environment **product
 The rebuild is not directly compatible with that deployment: `env.ts` requires `BRIVEN_PROJECT_DB_KEY` outside development, while the selected Compose file never passes it to API, runtime or realtime. That file also directs customer data and the Auth vault to Doltgres; the rebuild's serverless PostgreSQL deployment has a different Compose path and requires private PostgreSQL/control API endpoints. Switching the live branch or merging the rebuild into `main` would activate auto-deploy without the required configuration, database migration/rollback proof and outstanding Auth release checks.
 
 No deploy action or production configuration change was made. Finish the private engine and staged database/Auth migration, supply and verify the required settings through Dokploy, and complete the recorded Auth acceptance checks before the production cutover. The deployment request authorizes that cutover once its prerequisites are met; this hold is a technical compatibility failure, not a request for repeat approval.
+
+## Authorized private installation started
+
+The owner explicitly authorized all six installation, proof and eventual cutover steps, using the existing Dokploy project and server credentials. The current deployment target was revalidated as KVM2 (`187.77.183.190`) with 125 GB free disk and about 12 GB available memory; the live website containers are healthy. Dokploy's connected GitHub provider sees the engine repository and rebuild branch. The closed-room Compose check passes.
+
+The original immutable image was pulled and its digest matches the recorded value. An isolated runtime inspection confirms PostgreSQL 17, pgvector and the control/storage binaries, with no missing linked libraries in the checked executables. It also exposed a packaging defect: `briven_local` starts computes through `compute_ctl`, but the Dockerfile neither built nor copied that binary. The Dockerfile now includes it and verifies its executable startup during the build. This is a source correction before private installation, not a workaround that removes compute or isolation checks.
