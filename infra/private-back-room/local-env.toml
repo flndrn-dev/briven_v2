@@ -9,6 +9,7 @@ listen_addr = "127.0.0.1:50051"
 
 [storage_controller]
 timelines_onto_safekeepers = true
+database_url = "127.0.0.1:1235"
 
 [endpoint_storage]
 listen_addr = "127.0.0.1:9993"
