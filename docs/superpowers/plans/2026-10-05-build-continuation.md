@@ -56,3 +56,13 @@ Website rebuild branch `sprint3-serverless-postgres` at `942c8e3` includes proje
 API, Auth SDK and web typechecks, focused lint and both production builds pass. Verification includes 113 helper/SDK tests, 33 Auth PostgreSQL tests, seven reminder PostgreSQL tests and two function-metrics PostgreSQL tests. The reminder form's toggle and save feedback were checked in a local browser preview with a fake API. No production email was sent and no real phone was used.
 
 These changes are saved to the rebuild branch, not deployed to the live customer Auth service. Full setup screens, recovery restrictions and support policy, consistent factor checks across login methods, stable RP configuration, legacy-secret migration and real-device acceptance remain release gates. The reusable fresh-verification capability remains outstanding. The private engine tasks above are unchanged and still pending.
+
+## Live deployment preflight after the owner's request
+
+The owner explicitly requested commit, push, local sync and live deployment. Website implementation and verification records are pushed through `6438159`; the engine's progress record is pushed through `e76fc44ce`. Fetch confirmed the local engine branch and website `main` had no ahead/behind divergence. Unrelated engine working-tree edits were preserved.
+
+Dokploy still selects server **KVM2**, project **Briven**, environment **production**, Compose **briven-website** (`LykAyuz6qInYZe37wIMLp`), repository `flndrn-dev/briven-website`, branch `main`, path `infra/dokploy/compose.dokploy.yml`. The latest verified service status is `done`; public `https://api.briven.tech/ready` returned `ready` with all four checks `ok`.
+
+The rebuild is not directly compatible with that deployment: `env.ts` requires `BRIVEN_PROJECT_DB_KEY` outside development, while the selected Compose file never passes it to API, runtime or realtime. That file also directs customer data and the Auth vault to Doltgres; the rebuild's serverless PostgreSQL deployment has a different Compose path and requires private PostgreSQL/control API endpoints. Switching the live branch or merging the rebuild into `main` would activate auto-deploy without the required configuration, database migration/rollback proof and outstanding Auth release checks.
+
+No deploy action or production configuration change was made. Finish the private engine and staged database/Auth migration, supply and verify the required settings through Dokploy, and complete the recorded Auth acceptance checks before the production cutover. The deployment request authorizes that cutover once its prerequisites are met; this hold is a technical compatibility failure, not a request for repeat approval.
