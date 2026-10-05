@@ -30,7 +30,7 @@ Website rebuild branch `sprint3-serverless-postgres` at `62475e7` has a PostgreS
 | Passkeys | SimpleWebAuthn registration and login routes; basic hosted registration screen | Stable app domain configuration, strict origin checks, discoverable credentials and verified device unlock |
 | Emergency codes | No implementation found in the active schema or SDK | Show once, saved confirmation, hashed storage and atomic single use |
 | Lost phone without emergency codes | No complete recovery flow found | Define support permissions and identity checks, then build and test recovery |
-| Fresh verification for money actions | No complete Handlr integration contract established | Owner decision and a server-verifiable recent-authentication contract |
+| Fresh verification for money actions | Owner requires another identity check before withdrawals and bank-detail changes; integration not built | A server-verifiable recent-authentication contract |
 | Real phone and cross-device acceptance | Not demonstrated in this audit | Every device check in the handoff's definition of done |
 
 ## Security findings to carry into the design
@@ -52,11 +52,12 @@ The owner confirmed on 5 October that extra login protection is optional. Briven
 
 Users who keep regular authentication should receive recurring email reminders explaining the benefit of two-step verification and linking to setup. The implementation design must define the reminder schedule, avoid duplicate emails, and stop these reminders once the user completes the recommended protection. No reminder email has been sent and no delivery schedule has been activated.
 
+The owner also confirmed that Handlr must request fresh identity verification before withdrawals or changes to bank details, even within an existing login session. Being logged in is insufficient for those actions. Briven Auth must provide proof that Handlr's backend can check; a browser prompt alone cannot enforce this. The accepted verification method and freshness rules must be defined in the implementation design, consistent with the user's optional enrollment choice.
+
 ## Decisions still awaiting the owner
 
-1. Must users prove it is them again before withdrawing money or changing bank details?
-2. Can Face ID/fingerprint take users straight in, with the code app as backup, or must they also enter a code?
-3. Is recovery through emergency codes and a defined recovery process sufficient, or should text messages also be offered?
+1. Can Face ID/fingerprint take users straight in, with the code app as backup, or must they also enter a code?
+2. Is recovery through emergency codes and a defined recovery process sufficient, or should text messages also be offered?
 
 No unanswered choice is treated as approval to enable a policy. Other customer projects must keep their existing requirements during the Handlr pilot.
 
