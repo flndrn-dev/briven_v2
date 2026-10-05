@@ -42,4 +42,7 @@ grep -q 'host=/var/run/postgresql' "$file"
 test "$(grep -c 'remote_storage = ' "$config")" -eq 4
 grep -q './local-env.toml:/local-env.toml:ro' "$file"
 grep -q 'briven_control_api' "$start"
+grep -q 'ALTER SYSTEM SET fsync = on' "$start"
+grep -q 'SHOW fsync' "$start"
+sh -n "$start"
 echo "private room file is closed"

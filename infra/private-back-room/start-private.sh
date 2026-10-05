@@ -17,4 +17,12 @@ if [ -z "$(ls -A "$BRIVEN_REPO_DIR" 2>/dev/null || true)" ]; then
   briven_local init --config /local-env.toml --force empty-dir-ok
 fi
 briven_local start
+# briven_local's upstream test harness defaults its controller catalog to
+# fsync=off. Persist a production override before exposing the private API.
+controller_psql=/usr/local/v16/bin/psql
+"$controller_psql" -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U neon -d storage_controller \
+  -c 'ALTER SYSTEM SET fsync = on' >/dev/null
+"$controller_psql" -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U neon -d storage_controller \
+  -c 'SELECT pg_reload_conf()' >/dev/null
+test "$("$controller_psql" -X -At -h 127.0.0.1 -p 5432 -U neon -d storage_controller -c 'SHOW fsync')" = on
 exec briven_control_api
