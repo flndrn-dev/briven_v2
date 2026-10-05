@@ -1,8 +1,8 @@
 # Briven Auth platform readiness
 
-**Checked:** 5 October 2026. **Status:** source audit; no new Auth implementation or real-phone acceptance test.
+**Checked:** 5 October 2026. **Status:** shared Auth implementation and automated checks on the PostgreSQL rebuild branch; not deployed or accepted on a real phone.
 
-Briven has partial passkey and authenticator-code support. The platform still needs stronger project isolation, complete setup, emergency codes, and account recovery. The supplied application handoff describes capabilities for Briven Auth; it does not authorize building application-specific business rules. This record describes observed code and unresolved design details, not an approved implementation design.
+Briven's rebuild branch now includes stronger project isolation, verified passkey ceremonies, encrypted authenticator setup, single-use emergency codes and weekly protection reminder controls. Complete setup screens, recovery restrictions and real-device acceptance remain. The supplied application handoff describes shared Briven Auth capabilities; it does not authorize application-specific business rules.
 
 ## Platform scope and Neon foundation
 
@@ -27,23 +27,24 @@ An installed library or an old route file is not evidence that it handles live l
 
 Live website `main` at `7098e1b` uses PostgreSQL for dashboard/control data, while customer Auth's dedicated `briven_engine` database still uses Doltgres. Its pool explicitly rejects a host named `postgres`.
 
-Website rebuild branch `sprint3-serverless-postgres` at `62475e7` has a PostgreSQL-native Auth pool in `apps/api/src/services/auth-core/db.ts`. It is not the live website branch. The owner's current direction is serverless PostgreSQL with pgvector and AI. The July knowledge base's Doltgres requirements describe the older architecture; they cannot establish that the rebuild is already deployed.
+Website rebuild branch `sprint3-serverless-postgres` at `942c8e3` has a PostgreSQL-native Auth pool in `apps/api/src/services/auth-core/db.ts` and the shared Auth changes described below. It is not the live website branch. The owner's current direction is serverless PostgreSQL with pgvector and AI. The July knowledge base's Doltgres requirements describe the older architecture; they cannot establish that the rebuild is already deployed.
 
 ## What exists and what remains
 
 | Capability | Observed state | Work required before platform acceptance |
 | --- | --- | --- |
-| Authenticator setup | Backend generates a secret and an otpauth URI; a first code enables the device | QR image, copyable manual key, project-specific app label, resumable settings flow and SDK methods |
-| Password plus authenticator code | Password sign-in can return an MFA challenge | Bind challenge, user and session to the requesting project; limit retries and reject reused codes |
-| Passkeys | SimpleWebAuthn registration and login routes; basic hosted registration screen | Stable app domain configuration, strict origin checks, discoverable credentials and verified device unlock |
-| Emergency codes | No implementation found in the active schema or SDK | Show once, saved confirmation, hashed storage and atomic single use |
-| Lost phone without emergency codes | No complete recovery flow found | Define support permissions and identity checks, then build and test recovery |
+| Authenticator setup | Encrypted tenant-scoped secrets, project issuer label, resumable pending setup and typed SDK methods | QR image, copyable manual key, complete account-settings flow and migration sweep for old plaintext rows |
+| Password plus authenticator code | PostgreSQL-backed project-scoped challenge, limited retries, one-use codes and atomic session creation | Consistent enrolled-factor policy for email-code, magic-link, social and SSO login paths |
+| Passkeys | Strict approved-origin and RP checks, discoverable credentials, required user verification and atomic proof/session creation | Immutable project RP configuration and real-device/cross-device acceptance |
+| Emergency codes | Random codes returned once, scoped hashes stored, atomic single use and short recovery-marked session | Saved confirmation and recovery-only route restrictions with re-enrollment flow |
+| Lost phone without emergency codes | No complete recovery flow | Define support permissions and identity checks, then build and test recovery |
+| Weekly protection reminders | Project-branded weekly sender, dashboard controls, user preference endpoint and SDK; default off | Production SMTP verification, a working project security page and customer preference UI before activation |
 | Fresh verification for sensitive actions | Owner confirmed the need using money actions as an example; reusable integration not built | A server-verifiable recent-authentication contract that any app can request |
 | Real phone and cross-device acceptance | Not demonstrated in this audit | Every device check in the handoff's definition of done |
 
-## Security findings to carry into the design
+## Findings from the original source audit
 
-These are static-code findings, not claims of a demonstrated production exploit.
+These static findings describe the original rebuild baseline at `62475e7`, not a demonstrated production exploit. The fixes below are on the rebuild branch and have not been deployed to the live customer Auth service.
 
 - `auth-core-fdi.ts:sessionUserId` returns only the user ID. Setup and credential-management routes do not compare the session's tenant with the requesting project's tenant. The session helper exposes the tenant in its payload, but these routes discard it.
 - TOTP service queries generally filter by user ID without a tenant predicate. The login route accepts the signed challenge's tenant without checking equality with the request's tenant.
@@ -54,11 +55,23 @@ These are static-code findings, not claims of a demonstrated production exploit.
 - Registration base64url-encodes `info.credential.id` again. Installed SimpleWebAuthn types already define that ID as a base64url string; preserving and matching browser IDs needs a regression check.
 - WebAuthn challenge verification, deletion and credential-counter updates are separate queries. Concurrent successful requests need an atomic single-use proof. Finish routes must also reject a challenge from a different requesting project.
 
+The foundation changes address project/session comparisons, tenant predicates, persisted and retry-limited challenges, strict approved-origin validation, required discoverable credentials and user verification, canonical credential IDs and transactional consumption. Authenticator changes encrypt new secrets, upgrade old secrets on successful use or resumed pending setup, reject replayed time steps and bound failed factor attempts across new tickets. A full legacy-secret migration sweep and immutable RP settings remain release work.
+
+## Implementation evidence and release gates
+
+The shared website changes are in commits `14703b1` (project ownership), `0363b54` (MFA challenges), `2c4d9c5` (verified passkeys), `67c7303` (PostgreSQL/API contracts), `fb43b83` (authenticators and emergency codes), and `942c8e3` (weekly reminders). API, Auth SDK and web typechecks pass with no errors. Focused lint and API/web production builds pass.
+
+The helper and SDK suite passes 113 tests. Database-dependent tests were also run separately against a disposable local PostgreSQL database: 33 Auth verification tests, seven weekly reminder tests and two function-metrics tests pass. Reminder tests use an injected sender and synthetic recipients; no real email was sent. Passkey tests verify signed synthetic authenticator responses; they do not establish Face ID, fingerprint or cross-device behavior on a real phone.
+
+The actual reminder form was checked in Brave through a local React preview with production CSS and a fake settings API. The weekly toggle and successful save feedback work. This is component evidence, not proof of a deployed project-admin path.
+
+Before deployment, finish QR/manual-key setup and saved-code confirmation, restrict recovery-marked sessions to recovery routes, define and test recovery without backup codes and support permissions, apply factor policy consistently across primary login methods, establish stable RP configuration, sweep legacy secrets, and demonstrate the handoff's real-device checks. The generic fresh-verification contract also remains unbuilt. No Auth production cutover is claimed.
+
 ## Confirmed login policy
 
 The owner confirmed on 5 October that extra login protection is optional. Briven should recommend it, while allowing people to keep regular authentication. This replaces the earlier proposed progression toward mandatory enrollment; no automatic move to mandatory enrollment is approved.
 
-Users who keep regular authentication should receive recurring email reminders explaining the benefit of two-step verification and linking to setup. The implementation design must define the reminder schedule, avoid duplicate emails, and stop these reminders once the user completes the recommended protection. No reminder email has been sent and no delivery schedule has been activated.
+The owner selected **once a week**. Users who keep regular authentication can receive a project-branded reminder linking to account security. The implementation waits seven days after the later of signup or project activation, reserves each attempt for seven days to avoid duplicate sends, rechecks eligibility before delivery, and stops for enrolled authenticators, verified passkeys or user opt-out. Failed sends wait until the next weekly attempt and are not marked delivered. Project administrators must activate the setting and supply an HTTPS security-page URL from approved project origins. No reminder email has been sent and no live delivery schedule has been activated.
 
 The owner confirmed the need for fresh identity verification during a session. The later scope correction makes this a general Briven Auth capability: an application can request fresh verification for its sensitive actions and check the proof on its backend. Withdrawals and bank-detail changes were examples, not platform business rules. Briven must not contain payment-specific action handling or automatically impose those rules on every project. Accepted verification methods and freshness rules belong in the platform design and project settings, consistent with optional enrollment.
 

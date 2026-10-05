@@ -48,3 +48,11 @@ The engine image is `ghcr.io/flndrn-dev/briven-engine:sprint3-engine-20261005-1`
 GitHub now retains only `briven-website` and `briven_v2`. Local Git mirrors preserve the three retired repositories; see [the repository map](../../briven-repositories.md).
 
 The new shared Briven Auth capabilities are tracked separately in [the Auth readiness audit](../research/2026-10-05-briven-auth-readiness.md). The owner clarified that these are general platform features, with project settings, and that the build must stay close to its Neon GitHub foundation. Customer application names and money actions are examples, not business rules to build into Briven. Existing projects' login requirements must not change automatically.
+
+## Shared Auth progress
+
+Website rebuild branch `sprint3-serverless-postgres` at `942c8e3` includes project-isolated sessions and MFA challenges, strict transactional passkey verification, encrypted resumable authenticator setup, hashed single-use backup codes, and project-branded weekly reminder controls. Extra protection remains optional. The owner selected a reminder frequency of **once a week**; reminders stop after enrollment or user opt-out and default off until project activation.
+
+API, Auth SDK and web typechecks, focused lint and both production builds pass. Verification includes 113 helper/SDK tests, 33 Auth PostgreSQL tests, seven reminder PostgreSQL tests and two function-metrics PostgreSQL tests. The reminder form's toggle and save feedback were checked in a local browser preview with a fake API. No production email was sent and no real phone was used.
+
+These changes are saved to the rebuild branch, not deployed to the live customer Auth service. Full setup screens, recovery restrictions and support policy, consistent factor checks across login methods, stable RP configuration, legacy-secret migration and real-device acceptance remain release gates. The reusable fresh-verification capability remains outstanding. The private engine tasks above are unchanged and still pending.
