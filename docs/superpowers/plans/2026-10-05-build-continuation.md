@@ -47,4 +47,4 @@ The engine image is `ghcr.io/flndrn-dev/briven-engine:sprint3-engine-20261005-1`
 
 GitHub now retains only `briven-website` and `briven_v2`. Local Git mirrors preserve the three retired repositories; see [the repository map](../../briven-repositories.md).
 
-The new Handlr Auth request is tracked separately in [the Auth readiness audit](../research/2026-10-05-briven-auth-readiness.md). Its unanswered policy choices do not authorize changing existing tenants' login requirements.
+The new shared Briven Auth capabilities are tracked separately in [the Auth readiness audit](../research/2026-10-05-briven-auth-readiness.md). The owner clarified that these are general platform features, with project settings, and that the build must stay close to its Neon GitHub foundation. Customer application names and money actions are examples, not business rules to build into Briven. Existing projects' login requirements must not change automatically.

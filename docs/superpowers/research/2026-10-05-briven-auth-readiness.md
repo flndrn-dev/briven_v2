@@ -1,8 +1,16 @@
-# Briven Auth readiness for Handlr
+# Briven Auth platform readiness
 
 **Checked:** 5 October 2026. **Status:** source audit; no new Auth implementation or real-phone acceptance test.
 
-Briven has partial passkey and authenticator-code support. It does not yet meet the Handlr handoff. The work must first tighten app isolation, then complete setup, emergency codes, and account recovery. This record describes observed code and unresolved decisions, not an approved implementation design.
+Briven has partial passkey and authenticator-code support. The platform still needs stronger project isolation, complete setup, emergency codes, and account recovery. The supplied application handoff describes capabilities for Briven Auth; it does not authorize building application-specific business rules. This record describes observed code and unresolved design details, not an approved implementation design.
+
+## Platform scope and Neon foundation
+
+The owner clarified that this work must serve Briven as a general database platform and remain as close as practical to the Neon GitHub foundation. The verified engine upstream is [neondatabase/neon](https://github.com/neondatabase/neon). Its documented architecture separates PostgreSQL compute from the storage engine; Briven's existing serverless rebuild follows that foundation.
+
+Auth features belong in Briven's shared project configuration, API and SDK. App names, domains and policies must come from each project's settings. Handlr and mavi pay are examples of applications using the platform, not special cases in its implementation. No customer application screens, payment logic, fixed customer domain, or dedicated customer Auth fork belongs in this work.
+
+This scope correction does not itself approve replacing the current Auth backend. The active implementations are recorded below; changes to that architecture require an explicit platform design rather than assuming the Neon engine repository supplies a complete hosted Auth service.
 
 ## Which login system is actually used
 
@@ -23,14 +31,14 @@ Website rebuild branch `sprint3-serverless-postgres` at `62475e7` has a PostgreS
 
 ## What exists and what remains
 
-| Capability | Observed state | Work required before Handlr acceptance |
+| Capability | Observed state | Work required before platform acceptance |
 | --- | --- | --- |
-| Authenticator setup | Backend generates a secret and an otpauth URI; a first code enables the device | QR image, copyable manual key, Handlr label, resumable settings flow and SDK methods |
+| Authenticator setup | Backend generates a secret and an otpauth URI; a first code enables the device | QR image, copyable manual key, project-specific app label, resumable settings flow and SDK methods |
 | Password plus authenticator code | Password sign-in can return an MFA challenge | Bind challenge, user and session to the requesting project; limit retries and reject reused codes |
 | Passkeys | SimpleWebAuthn registration and login routes; basic hosted registration screen | Stable app domain configuration, strict origin checks, discoverable credentials and verified device unlock |
 | Emergency codes | No implementation found in the active schema or SDK | Show once, saved confirmation, hashed storage and atomic single use |
 | Lost phone without emergency codes | No complete recovery flow found | Define support permissions and identity checks, then build and test recovery |
-| Fresh verification for money actions | Owner requires another identity check before withdrawals and bank-detail changes; integration not built | A server-verifiable recent-authentication contract |
+| Fresh verification for sensitive actions | Owner confirmed the need using money actions as an example; reusable integration not built | A server-verifiable recent-authentication contract that any app can request |
 | Real phone and cross-device acceptance | Not demonstrated in this audit | Every device check in the handoff's definition of done |
 
 ## Security findings to carry into the design
@@ -52,20 +60,19 @@ The owner confirmed on 5 October that extra login protection is optional. Briven
 
 Users who keep regular authentication should receive recurring email reminders explaining the benefit of two-step verification and linking to setup. The implementation design must define the reminder schedule, avoid duplicate emails, and stop these reminders once the user completes the recommended protection. No reminder email has been sent and no delivery schedule has been activated.
 
-The owner also confirmed that Handlr must request fresh identity verification before withdrawals or changes to bank details, even within an existing login session. Being logged in is insufficient for those actions. Briven Auth must provide proof that Handlr's backend can check; a browser prompt alone cannot enforce this. The accepted verification method and freshness rules must be defined in the implementation design, consistent with the user's optional enrollment choice.
+The owner confirmed the need for fresh identity verification during a session. The later scope correction makes this a general Briven Auth capability: an application can request fresh verification for its sensitive actions and check the proof on its backend. Withdrawals and bank-detail changes were examples, not platform business rules. Briven must not contain payment-specific action handling or automatically impose those rules on every project. Accepted verification methods and freshness rules belong in the platform design and project settings, consistent with optional enrollment.
 
-## Decisions still awaiting the owner
+## Platform design details still to resolve
 
-1. Can Face ID/fingerprint take users straight in, with the code app as backup, or must they also enter a code?
-2. Is recovery through emergency codes and a defined recovery process sufficient, or should text messages also be offered?
+The design must define how projects configure passkeys as a primary login method or as additional verification, and how their recovery policy works. These are shared platform settings, not questions about building one particular customer application. SMS fallback is not approved by the supplied feature request.
 
-No unanswered choice is treated as approval to enable a policy. Other customer projects must keep their existing requirements during the Handlr pilot.
+No unresolved design detail is treated as approval to activate a policy. Existing projects must keep their current login requirements during staged platform testing.
 
 ## Domain and recovery boundaries
 
-The handoff confirms `handlr.sh`. The proposed passkey RP ID is `handlr.sh`, with explicitly approved first-party origins. It must be settled before enrolling anyone. A normal Briven-hosted page cannot simply create a Handlr-domain passkey; the SDK or a verified Handlr-domain Auth surface must perform the browser ceremony. Handlr app screens and Neon migration remain out of scope.
+Each project's passkey RP ID and allowed first-party origins must be configured and verified before enrollment. The RP ID must remain stable after credentials are issued; no particular customer's domain should be hard-coded. A normal Briven-hosted page cannot simply create a passkey scoped to an unrelated customer domain. The SDK or a verified Auth surface on the project's domain must perform the browser ceremony. Customer app screens and migration from another provider remain separate work.
 
-The recovery design must state what support can reset and what proof is required. Email access alone must not silently become a shortcut around the protection selected for a money account. No recovery design has been approved or tested here.
+The recovery design must state what support can reset and what proof is required. Email access alone must not silently become a shortcut around a project's selected protection. No recovery design has been approved or tested here.
 
 ## References read
 
