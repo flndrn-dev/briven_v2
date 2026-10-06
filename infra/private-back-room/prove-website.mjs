@@ -28,6 +28,43 @@ async function checkAi(projectId) {
   check(explained.res.ok && typeof explained.data.explanation === 'string' && explained.data.explanation.length > 20,
     'configured AI model explains a real project vector query');
 }
+async function checkBranches(projectId, pool) {
+  const record = await pool.query('SELECT engine_project_id AS id FROM projects WHERE id=$1', [projectId]);
+  const engineProjectId = record.rows[0].id;
+  const base = `/v1/control/projects/${engineProjectId}`;
+  const listed = await request(base + '/branches');
+  check(listed.res.ok, 'owner lists engine branches through website gateway');
+  if (!listed.data.some(branch => branch.name === 'stage-acceptance')) {
+    check((await request(base + '/branches', 'POST', { name: 'stage-acceptance', parent: 'main' })).res.ok,
+      'owner creates database branch through website gateway');
+  }
+  const computes = await request(base + '/computes');
+  check(computes.res.ok, 'owner lists project computes');
+  if (!computes.data.some(compute => compute.branch === 'stage-acceptance')) {
+    check((await request(base + '/branches/stage-acceptance/computes', 'POST')).res.ok, 'branch compute starts');
+  }
+  const connection = await request(base + '/branches/stage-acceptance/connection');
+  check(connection.res.ok && connection.data.environment === 'customer', 'website issues a branch-scoped customer connection');
+  hidden.push(connection.data.uri);
+  const uri = new URL(connection.data.uri);
+  check(uri.username === `briven_${engineProjectId}` && uri.searchParams.get('options') === `endpoint=ep-${engineProjectId}-stage-acceptance`,
+    'branch credential preserves tenant and requested branch binding');
+  uri.hostname = process.env.BRIVEN_ENGINE_PROXY_HOST ?? 'briven-customer-db';
+  uri.searchParams.delete('sslmode');
+  const { default: pg } = await import('/app/apps/api/node_modules/pg/lib/index.js');
+  const client = new pg.Client({ connectionString: uri.toString(), ssl: {
+    ca: readFileSync(process.env.BRIVEN_ENGINE_CA_FILE, 'utf8'), rejectUnauthorized: true,
+  }, connectionTimeoutMillis: 10000 });
+  client.on('error', () => {});
+  try {
+    await client.connect();
+    const vectors = await client.query("SELECT count(*)::int AS count FROM briven_website_proof WHERE embedding IS NOT NULL");
+    check(vectors.rows[0].count >= 2, 'database branch retains source rows and vectors');
+    await client.query("INSERT INTO briven_website_proof VALUES(9,'branch-only','[0,0,1]') ON CONFLICT(id) DO NOTHING");
+    const main = await request(`/v1/projects/${projectId}/studio/query`, 'POST', { sql: 'SELECT count(*)::int AS count FROM briven_website_proof WHERE id=9' });
+    check(main.res.ok && main.data.rows[0].count === 0, 'branch writes remain isolated from main compute');
+  } finally { await client.end(); }
+}
 try {
   acceptance: {
   const { getDb, getPool, closeDb: close } = await import('/app/apps/api/src/db/client.ts');
@@ -72,6 +109,30 @@ try {
   if (process.env.BRIVEN_ACCEPTANCE_PHASE === 'ai') {
     await checkAi(projectId);
     console.log(JSON.stringify({ phase: 'staged-ai', result: 'pass' }));
+    break acceptance;
+  }
+  if (process.env.BRIVEN_ACCEPTANCE_PHASE === 'branches') {
+    await checkBranches(projectId, getPool());
+    console.log(JSON.stringify({ phase: 'staged-branches', result: 'pass' }));
+    break acceptance;
+  }
+  if (process.env.BRIVEN_ACCEPTANCE_PHASE === 'public-connections') {
+    const record = await getPool().query('SELECT engine_project_id AS id FROM projects WHERE id=$1', [projectId]);
+    const engineProjectId = record.rows[0].id;
+    const shell = await request(`/v1/projects/${projectId}/db/shell-token`, 'POST');
+    check(shell.res.ok, 'owner obtains customer shell connection');
+    const main = await request(`/v1/control/projects/${engineProjectId}/branches/main/connection`);
+    const branch = await request(`/v1/control/projects/${engineProjectId}/branches/stage-acceptance/connection`);
+    check(main.res.ok && branch.res.ok, 'owner obtains main and branch customer connections');
+    for (const [label, value, branchName] of [['shell', shell.data.dsn, 'main'], ['main', main.data.uri, 'main'], ['branch', branch.data.uri, 'stage-acceptance']]) {
+      hidden.push(value);
+      const uri = new URL(value);
+      check(uri.hostname === 'briven.tech' && uri.port === '5432' && uri.username === `briven_${engineProjectId}` && uri.searchParams.get('sslmode') === 'verify-full' && uri.searchParams.get('options') === `endpoint=ep-${engineProjectId}${branchName === 'main' ? '' : '-' + branchName}`,
+        `${label} customer response publishes verified public TLS and exact endpoint binding`);
+    }
+    check(main.res.headers.get('cache-control')?.includes('no-store') && branch.res.headers.get('cache-control')?.includes('no-store'),
+      'customer gateway connection responses prohibit caching');
+    console.log(JSON.stringify({ phase: 'staged-public-connections', result: 'pass' }));
     break acceptance;
   }
   const query = async sql => request(`/v1/projects/${projectId}/studio/query`, 'POST', { sql });
@@ -139,11 +200,15 @@ try {
   socket.addEventListener('open', () => socket.send(JSON.stringify({
     type: 'subscribe', subscriptionId: 'staged-realtime', projectId, functionName: 'vectorRows', args: {},
   })));
-  socket.addEventListener('message', event => { frames.push(JSON.parse(String(event.data))); });
+  socket.addEventListener('message', event => {
+    const frame = JSON.parse(String(event.data));
+    if (frame.type !== 'hello') frames.push(frame);
+  });
   const waitForFrames = async count => {
     for (let attempt = 0; attempt < 400 && frames.length < count; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   };
   await waitForFrames(1);
+  console.log(JSON.stringify({ realtimeFrameType: frames[0]?.type, realtimeCode: frames[0]?.code, realtimeMessage: frames[0]?.message }));
   check(frames[0]?.type === 'data' && frames[0]?.ok && frames[0]?.value?.rows?.length >= 2,
     'deployed realtime service authenticates project key and returns function query');
   check((await query("UPDATE briven_website_proof SET note='nearest' WHERE id=1")).res.ok, 'committed write for deployed realtime subscription');

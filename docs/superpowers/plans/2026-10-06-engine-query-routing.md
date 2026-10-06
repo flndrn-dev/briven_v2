@@ -38,15 +38,15 @@
 - [x] Route application SQL through runtime credentials and explicit trusted metadata through platform credentials. Preserve the explicitly configured development backend, with no hosted fallback.
 - [x] Initialize bookkeeping tables during engine creation; customer shell continues to use the customer role.
 - [x] Remove shared administrator requirements from hosted configuration/readiness. Disable unsupported destructive reprovision operations before they reach SQL.
-- [ ] Run API/runtime/realtime/shared typechecks and focused tests, then staged vector CRUD and notifications against real engine projects.
+- [x] Run API/runtime/realtime/shared typechecks and focused tests, then staged vector CRUD and notifications against real engine projects.
 
 ## Task 3: Fresh website and cutover acceptance
 
 **Files:** Website `infra/dokploy/compose.serverless-postgres.yml`, release evidence, existing database migrations.
 
 - [x] Mount public CA certificates, join verified private networks, and use the fresh control/Auth databases.
-- [ ] Keep incomplete Auth enrollment unavailable; prepare and verify the new owner account.
-- [ ] Build through CI and stage before domain cutover; prove login, project creation, scoped SQL/vector queries, runtime and realtime.
+- [x] Keep incomplete Auth enrollment unavailable; prepare and verify the new owner account.
+- [x] Build through CI and stage before domain cutover; prove login, project creation, scoped SQL/vector queries, runtime and realtime.
 - [ ] Switch through Dokploy under the prior authorization, retain old storage for rollback, and verify public readiness and owner dashboard access.
 
 ## Checkpoint on 6 October
@@ -86,3 +86,17 @@ Credential rotation exposed a real compatibility issue: the inherited proxy emit
 The configured AI gateway at `ai.flndrn.com` answers its application health route, but model listing, chat and generation return 502. Actual AI query explanation therefore fails acceptance. The owner has been asked whether cutover should wait for working AI or launch with AI temporarily unavailable. Independent PostgreSQL/function/realtime acceptance continues; no AI completion or cutover is claimed.
 
 Automatic idle suspension, load-based compute scaling and customer-managed snapshot restore remain open beyond this initial cutover. Tested compute wake-up and operator backup/restore do not establish completion of those features.
+
+### Verified public PostgreSQL and staged core checkpoint
+
+Website release `serverless-20261006-3` (source `7aa6570`, CI `37497583018`) deployed successfully. Core acceptance passed before and after enabling the engine's public TLS profile: owner password login and dashboard rendering, fresh databases, Studio vectors and transaction rollback, independent customer/service credentials, real Deno function execution with broker-secret isolation, schema ownership, and the deployed realtime WebSocket receiving a second function result after a committed SQL update. The fresh Auth store still has zero imported users; enrollment remains gated.
+
+Engine deployment `yhrJCHcEhr_l6fZ1QGb2b` published only PostgreSQL port 5432 on `briven.tech`. External acceptance passed trusted TLS/hostname verification, customer vector queries, metadata denial, revoked/wrong credentials, wrong tenant, administrator rejection, plaintext refusal, and closed control/management ports. The same checks passed after the certificate reload proof. Switching the existing valid certificate generation path atomically restarted only the proxy; control and customer compute process IDs remained unchanged. The hourly export timer was restored and active. This validates the reload mechanism; it does not claim that a new ACME certificate was issued during the test.
+
+Website commit `e743b1a` fixes strict requested-branch binding for customer connections and adds API-only image releases. Six shared connection tests and API typecheck pass; targeted CI `37500246484` successfully published API tag `serverless-20261006-4`. The private stage is deploying that API while retaining tag 3 for the other four services. Its customer connection publication now targets the externally verified `briven.tech`; public website routing remains false. Branch and actual public customer response acceptance follow deployment. AI listing/generation still return 502, and the owner's launch preference remains pending.
+
+### Final staged database acceptance checkpoint
+
+Deployment `NZVUsOjX15K82oO2Pofq9` finished successfully at 17:22 UTC: API tag 4, runtime/realtime/web/docs tag 3. Website gateway acceptance created `stage-acceptance`, started its compute, verified copied vectors and independent branch writes. Actual owner-authenticated shell, main and branch responses publish `briven.tech:5432`, `sslmode=verify-full`, the customer role and exact tenant/branch endpoint; gateway credentials prohibit caching. External connections to those issued main and branch leases passed trusted TLS, vector search and independent data checks alongside all credential/isolation/closed-port checks. A final full core acceptance on the updated API also passed Studio, transaction rollback, credential rotation, schema/function execution, real realtime WebSocket updates, readiness and owner dashboard rendering.
+
+The public database proxy is active; the new website remains private. No website domain cutover or AI acceptance has occurred. The pending launch choice is specifically whether to wait for a working existing AI gateway or implement explicit unavailable states for an initial database launch. Automatic idle suspension, compute scaling, customer-managed restore and customer Auth remain unfinished. Preserve the existing website and volumes while this choice is pending.

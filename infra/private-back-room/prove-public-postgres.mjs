@@ -35,8 +35,10 @@ async function portClosed(port) {
     socket.once('error', () => finish(true));
   });
 }
-let client;
+let client, branchClient;
 try {
+  if (input.published) check(new URL(input.current.uri).hostname === 'briven.tech' && new URL(input.current.uri).searchParams.get('sslmode') === 'verify-full',
+    'customer-issued URI already contains the verified public hostname');
   const current = uri(input.current.uri);
   client = await connect(current);
   check(client.connection.stream.encrypted && client.connection.stream.authorized,
@@ -48,6 +50,16 @@ try {
   let metadataDenied = false;
   try { await client.query('SELECT * FROM _briven_meta'); } catch (error) { metadataDenied = error.code === '42501'; }
   check(metadataDenied, 'external customer cannot read platform metadata');
+  if (input.branch) {
+    check(new URL(input.branch.uri).hostname === 'briven.tech' && new URL(input.branch.uri).searchParams.get('options') === `endpoint=ep-${input.current.engineProjectId}-stage-acceptance`,
+      'public branch URI preserves exact tenant and branch');
+    branchClient = await connect(uri(input.branch.uri));
+    const branchRows = await branchClient.query("SELECT count(*)::int AS count FROM briven_website_proof WHERE id=9 AND note='branch-only'");
+    const mainRows = await client.query('SELECT count(*)::int AS count FROM briven_website_proof WHERE id=9');
+    check(branchRows.rows[0].count === 1 && mainRows.rows[0].count === 0, 'external branch query proves independent data from main');
+    const nearest = await branchClient.query("SELECT note FROM briven_website_proof ORDER BY embedding <-> '[1,0,0]'::vector LIMIT 1");
+    check(nearest.rows[0]?.note === 'nearest', 'external branch pgvector similarity query');
+  }
   check(await rejected(uri(input.revoked.uri)), 'rotated customer password is rejected externally');
   const wrongPassword = new URL(current); wrongPassword.password = '0'.repeat(64);
   check(await rejected(wrongPassword), 'public proxy rejects wrong password');
@@ -65,4 +77,4 @@ try {
   // Never surface driver errors containing credentials or connection URIs.
   console.log(JSON.stringify({ phase: 'public-postgres', result: 'fail', error: String(error.message).replace(/postgres(?:ql)?:\/\/[^\s"']+/g, '[redacted]').slice(0, 200) }));
   process.exitCode = 1;
-} finally { await client?.end().catch(() => {}); }
+} finally { await branchClient?.end().catch(() => {}); await client?.end().catch(() => {}); }
