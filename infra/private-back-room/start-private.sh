@@ -55,7 +55,9 @@ test "$("$controller_psql" -X -At -h 127.0.0.1 -p 1235 -U neon -d storage_contro
 briven_control_api &
 api_pid=$!
 # The proxy runs in this namespace so customer computes remain loopback-only.
-proxy --auth-backend control-plane --auth-endpoint http://127.0.0.1:8787/proxy/ \
+# The inherited client appends a path segment without removing an empty final
+# segment, so a trailing slash would send callbacks to /proxy//method.
+proxy --auth-backend control-plane --auth-endpoint http://127.0.0.1:8787/proxy \
   --proxy 0.0.0.0:5432 --mgmt 127.0.0.1:7000 --http 127.0.0.1:7001 \
   --tls-key /etc/briven/proxy-tls/server.key --tls-cert /etc/briven/proxy-tls/server.crt \
   --project-info-cache size=0,max_roles=0,gc_interval=60s --wake-compute-cache size=0 &
