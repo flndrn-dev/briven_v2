@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::customer_credential::ServiceKind;
 use anyhow::{Result, bail};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
@@ -23,11 +24,23 @@ pub enum Role {
 pub struct Principal {
     pub organization: String,
     pub role: Role,
+    pub service_scope: Option<(String, ServiceKind)>,
 }
 
 impl Principal {
     pub fn can_write(&self) -> bool {
         self.role != Role::Viewer
+    }
+
+    pub fn is_customer(&self) -> bool {
+        self.service_scope.is_none()
+    }
+
+    pub fn service_for(&self, project: &str) -> Option<ServiceKind> {
+        self.service_scope
+            .as_ref()
+            .filter(|(id, _)| id == project && self.can_write())
+            .map(|(_, kind)| *kind)
     }
 }
 
@@ -38,6 +51,8 @@ struct IdentityClaims {
     role: String,
     iat: u64,
     exp: u64,
+    service_project: Option<String>,
+    service_kind: Option<String>,
 }
 
 impl AuthConfig {
@@ -126,9 +141,22 @@ impl AuthConfig {
                 "owner" => Role::Owner,
                 _ => return None,
             };
+            let service_scope = match (claims.service_project, claims.service_kind) {
+                (None, None) => None,
+                (Some(project), Some(kind))
+                    if project.len() == 32
+                        && project
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) =>
+                {
+                    Some((project, ServiceKind::parse(&kind)?))
+                }
+                _ => return None,
+            };
             return Some(Principal {
                 organization: claims.org_id,
                 role,
+                service_scope,
             });
         }
         let hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
@@ -138,6 +166,7 @@ impl AuthConfig {
             .map(|(organization, _)| Principal {
                 organization: organization.clone(),
                 role: Role::Admin,
+                service_scope: None,
             })
     }
 }
@@ -162,6 +191,54 @@ fn valid_customer_org(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn signed_services_cannot_use_customer_authority_or_another_tenant() {
+        use super::ServiceKind;
+        let secret = "service-identity-secret-at-least-32-characters";
+        let auth = AuthConfig {
+            keys: Vec::new(),
+            identity_key: Some(DecodingKey::from_secret(secret.as_bytes())),
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let sign = |project: serde_json::Value, kind: serde_json::Value, role: &str| {
+            encode(
+                &Header::default(),
+                &serde_json::json!({
+                    "iss": "briven-api", "aud": "briven-control", "sub": "api-broker",
+                    "org_id": "org_test", "role": role, "iat": now, "exp": now + 60,
+                    "service_project": project, "service_kind": kind,
+                }),
+                &EncodingKey::from_secret(secret.as_bytes()),
+            )
+            .unwrap()
+        };
+        let project = "a1b2c3d4e5f67890a1b2c3d4e5f67890";
+        let principal = auth
+            .principal_for(&sign(project.into(), "runtime".into(), "admin"))
+            .unwrap();
+        assert!(!principal.is_customer());
+        assert_eq!(principal.service_for(project), Some(ServiceKind::Runtime));
+        assert_eq!(
+            principal.service_for("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            None
+        );
+        let viewer = auth
+            .principal_for(&sign(project.into(), "platform".into(), "viewer"))
+            .unwrap();
+        assert_eq!(viewer.service_for(project), None);
+        for (id, kind) in [
+            (project.into(), "admin".into()),
+            (project.into(), serde_json::Value::Null),
+            ("../tenant".into(), "runtime".into()),
+            (serde_json::Value::Null, "runtime".into()),
+        ] {
+            assert!(auth.principal_for(&sign(id, kind, "admin")).is_none());
+        }
+    }
+
     use super::{AuthConfig, Role};
     use jsonwebtoken::{DecodingKey, EncodingKey, Header, encode};
     use serde::Serialize;

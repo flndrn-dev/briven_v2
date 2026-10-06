@@ -2,6 +2,34 @@ use rand::Rng;
 
 pub const CUSTOMER_KEY_SECONDS: u64 = 900;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceKind {
+    Platform,
+    Runtime,
+}
+
+impl ServiceKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "platform" => Some(Self::Platform),
+            "runtime" => Some(Self::Runtime),
+            _ => None,
+        }
+    }
+
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Platform => "platform",
+            Self::Runtime => "runtime",
+        }
+    }
+}
+
+pub fn service_role_name(project_id: &str, kind: ServiceKind) -> Option<String> {
+    let role = format!("{}_{}", customer_role_name(project_id)?, kind.suffix());
+    (role.len() <= 63).then_some(role)
+}
+
 #[derive(Clone)]
 pub struct CustomerCredential {
     pub role: String,
@@ -77,6 +105,18 @@ pub fn issue_customer_credential(
     })
 }
 
+pub fn issue_service_credential(
+    project_id: &str,
+    kind: ServiceKind,
+    database: &str,
+    password: &str,
+    now_unix: u64,
+) -> Option<CustomerCredential> {
+    let mut credential = issue_customer_credential(project_id, database, password, now_unix)?;
+    credential.role = service_role_name(project_id, kind)?;
+    Some(credential)
+}
+
 pub fn customer_door_accepts(role: &str) -> bool {
     if FORBIDDEN_ROLES.contains(&role) {
         return false;
@@ -84,6 +124,10 @@ pub fn customer_door_accepts(role: &str) -> bool {
     let Some(body) = role.strip_prefix("briven_") else {
         return false;
     };
+    let body = body
+        .strip_suffix("_platform")
+        .or_else(|| body.strip_suffix("_runtime"))
+        .unwrap_or(body);
     (8..=48).contains(&body.len())
         && body
             .chars()
@@ -92,7 +136,10 @@ pub fn customer_door_accepts(role: &str) -> bool {
 }
 
 pub fn credential_opens_project(role: &str, project_id: &str) -> bool {
-    customer_role_name(project_id).as_deref() == Some(role) && customer_door_accepts(role)
+    customer_door_accepts(role)
+        && (customer_role_name(project_id).as_deref() == Some(role)
+            || service_role_name(project_id, ServiceKind::Platform).as_deref() == Some(role)
+            || service_role_name(project_id, ServiceKind::Runtime).as_deref() == Some(role))
 }
 
 pub fn valid_proxy_host(host: &str) -> bool {
@@ -171,13 +218,49 @@ pub fn customer_role_statements(credential: &CustomerCredential) -> Option<Vec<S
     let database = &credential.database;
     let password = &credential.password;
     let until = &credential.valid_until;
-    Some(vec![
-        format!("CREATE ROLE {role} WITH LOGIN PASSWORD '{password}' VALID UNTIL '{until}'"),
-        format!("ALTER ROLE {role} WITH LOGIN PASSWORD '{password}' VALID UNTIL '{until}'"),
-        format!("GRANT CONNECT ON DATABASE {database} TO {role}"),
-        format!("GRANT ALL PRIVILEGES ON DATABASE {database} TO {role}"),
-        format!("GRANT ALL ON SCHEMA public TO {role}"),
-    ])
+    let customer = role
+        .strip_suffix("_platform")
+        .or_else(|| role.strip_suffix("_runtime"))
+        .unwrap_or(role);
+    let platform = format!("{customer}_platform");
+    let runtime = format!("{customer}_runtime");
+    if platform.len() > 63 {
+        return None;
+    }
+    let roles = [customer, platform.as_str(), runtime.as_str()];
+    let mut statements = Vec::new();
+    for granted in roles {
+        statements.push(format!("DO $briven$ BEGIN CREATE ROLE {granted} NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $briven$"));
+        statements.push(format!(
+            "ALTER ROLE {granted} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+        ));
+    }
+    statements.push(format!(
+        "ALTER ROLE {role} WITH LOGIN PASSWORD '{password}' VALID UNTIL '{until}'"
+    ));
+    // All untrusted application sessions SET ROLE to the customer role, so
+    // tables created by SQL, functions and schema deployments share an owner.
+    // Only the platform role can reset to its metadata privileges.
+    statements.push(format!("GRANT {customer} TO {runtime}, {platform}"));
+    statements.push(format!("CREATE TABLE IF NOT EXISTS public._briven_migrations (id text PRIMARY KEY, deployment_id text, applied_at timestamptz NOT NULL DEFAULT now(), summary jsonb)"));
+    statements.push("CREATE TABLE IF NOT EXISTS public._briven_meta (key text PRIMARY KEY, value jsonb NOT NULL)".to_string());
+    for granted in roles {
+        statements.push(format!("GRANT CONNECT ON DATABASE {database} TO {granted}"));
+        statements.push(format!("GRANT USAGE, CREATE ON SCHEMA public TO {granted}"));
+        statements.push(format!(
+            "GRANT ALL ON ALL TABLES IN SCHEMA public TO {granted}"
+        ));
+        statements.push(format!(
+            "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {granted}"
+        ));
+        statements.push(format!("ALTER DEFAULT PRIVILEGES FOR ROLE {customer} IN SCHEMA public GRANT ALL ON TABLES TO {granted}"));
+        statements.push(format!("ALTER DEFAULT PRIVILEGES FOR ROLE {customer} IN SCHEMA public GRANT ALL ON SEQUENCES TO {granted}"));
+    }
+    statements.push(format!("REVOKE ALL ON TABLE public._briven_meta, public._briven_migrations FROM PUBLIC, {customer}, {runtime}"));
+    statements.push(format!(
+        "GRANT ALL ON TABLE public._briven_meta, public._briven_migrations TO {platform}"
+    ));
+    Some(statements)
 }
 
 pub fn role_already_exists(sqlstate: &str) -> bool {
@@ -234,6 +317,41 @@ pub fn connection_gate(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn service_credentials_are_independent_and_bound_to_the_exact_tenant() {
+        use super::*;
+        for kind in [ServiceKind::Platform, ServiceKind::Runtime] {
+            let credential =
+                issue_service_credential(PROJECT, kind, "postgres", PASSWORD, 0).unwrap();
+            assert_ne!(credential.role, customer_role_name(PROJECT).unwrap());
+            assert!(credential_opens_project(&credential.role, PROJECT));
+            assert!(!credential_opens_project(
+                &credential.role,
+                "bbbbbbbbbbbbbbbb"
+            ));
+            let sql = customer_role_statements(&credential).unwrap();
+            assert_eq!(
+                sql.iter()
+                    .filter(|s| s.contains("WITH LOGIN PASSWORD"))
+                    .count(),
+                1
+            );
+            assert!(
+                sql.iter()
+                    .any(|s| s.starts_with(&format!("ALTER ROLE {} WITH LOGIN", credential.role)))
+            );
+            assert!(sql.iter().any(|s| s.contains("REVOKE ALL ON TABLE public._briven_meta, public._briven_migrations FROM PUBLIC, briven_a1b2c3d4e5f67890, briven_a1b2c3d4e5f67890_runtime")));
+        }
+        for role in [
+            "briven_a1b2c3d4e5f67890_admin",
+            "briven_a1b2c3d4e5f67890_runtime_platform",
+            "briven_a1b2c3d4e5f67890_runtime_evil",
+        ] {
+            assert!(!customer_door_accepts(role));
+            assert!(!credential_opens_project(role, PROJECT));
+        }
+    }
+
     use super::{
         CUSTOMER_KEY_SECONDS, credential_opens_project, customer_door_accepts, customer_role_name,
         customer_role_statements, customer_uri, issue_customer_credential,

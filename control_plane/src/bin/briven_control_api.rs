@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_postgres::NoTls;
-use tokio_postgres::error::SqlState;
 use utils::id::{TenantId, TimelineId};
 
 #[path = "../briven_control_api/auth.rs"]
@@ -113,6 +112,17 @@ fn engine(error: impl std::fmt::Display) -> ApiError {
 }
 
 fn authorize(headers: &HeaderMap, auth: &AuthConfig, write: bool) -> ApiResult<Principal> {
+    let principal = authenticated(headers, auth)?;
+    if !principal.is_customer() || (write && !principal.can_write()) {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "insufficient organization role",
+        ));
+    }
+    Ok(principal)
+}
+
+fn authenticated(headers: &HeaderMap, auth: &AuthConfig) -> ApiResult<Principal> {
     let supplied = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -123,12 +133,6 @@ fn authorize(headers: &HeaderMap, auth: &AuthConfig, write: bool) -> ApiResult<P
             StatusCode::UNAUTHORIZED,
             "authentication required",
         ))?;
-    if write && !principal.can_write() {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "insufficient organization role",
-        ));
-    }
     Ok(principal)
 }
 
@@ -266,19 +270,12 @@ async fn apply_customer_role(admin_uri: &str, statements: &[String]) -> ApiResul
         let task = tokio::spawn(async move {
             let _ = connection.await;
         });
-        let mut first = true;
-        let mut outcome = Ok(());
-        for statement in statements {
-            match client.simple_query(statement).await {
-                Ok(_) => {}
-                Err(error) if first && error.code() == Some(&SqlState::DUPLICATE_OBJECT) => {}
-                Err(error) => {
-                    outcome = Err(error);
-                    break;
-                }
-            }
-            first = false;
-        }
+        // Apply role rotation and metadata grants atomically. In particular,
+        // untrusted roles never see the temporary grant of metadata tables.
+        let outcome = client
+            .simple_query(&format!("BEGIN; {}; COMMIT;", statements.join("; ")))
+            .await
+            .map(|_| ());
         task.abort();
         outcome
     })
@@ -663,8 +660,48 @@ async fn get_connection(
     headers: HeaderMap,
     RoutePath((id, branch)): RoutePath<(String, String)>,
 ) -> ApiResult<Json<Connection>> {
+    issue_connection(state, headers, id, branch, None).await
+}
+
+async fn get_service_connection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    RoutePath((id, branch)): RoutePath<(String, String)>,
+) -> ApiResult<Json<Connection>> {
+    if !state.auth.uses_customer_identity() {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "signed service identity required",
+        ));
+    }
+    let principal = authenticated(&headers, &state.auth)?;
+    let kind = principal.service_for(&id).ok_or(ApiError(
+        StatusCode::FORBIDDEN,
+        "project service scope required",
+    ))?;
+    issue_connection(state, headers, id, branch, Some(kind)).await
+}
+
+async fn issue_connection(
+    state: AppState,
+    headers: HeaderMap,
+    id: String,
+    branch: String,
+    service_kind: Option<customer_credential::ServiceKind>,
+) -> ApiResult<Json<Connection>> {
     if state.auth.uses_customer_identity() {
-        let principal = authorize(&headers, &state.auth, true)?;
+        let principal = if let Some(kind) = service_kind {
+            let principal = authenticated(&headers, &state.auth)?;
+            if principal.service_for(&id) != Some(kind) {
+                return Err(ApiError(
+                    StatusCode::FORBIDDEN,
+                    "project service scope required",
+                ));
+            }
+            principal
+        } else {
+            authorize(&headers, &state.auth, true)?
+        };
         let host = std::env::var("BRIVEN_CUSTOMER_PROXY_HOST").unwrap_or_default();
         let port = std::env::var("BRIVEN_CUSTOMER_PROXY_PORT")
             .ok()
@@ -750,9 +787,12 @@ async fn get_connection(
             .map_err(internal)?
             .as_secs();
         let password = customer_credential::random_customer_password();
-        let credential = customer_credential::issue_customer_credential(
-            &id, "postgres", &password, now,
-        )
+        let credential = match service_kind {
+            Some(kind) => {
+                customer_credential::issue_service_credential(&id, kind, "postgres", &password, now)
+            }
+            None => customer_credential::issue_customer_credential(&id, "postgres", &password, now),
+        }
         .ok_or(ApiError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "control API operation failed",
@@ -784,7 +824,11 @@ async fn get_connection(
         ))?;
         return Ok(Json(Connection {
             uri,
-            environment: "customer",
+            environment: if service_kind.is_some() {
+                "service"
+            } else {
+                "customer"
+            },
             expires_at: Some(credential.valid_until),
         }));
     }
@@ -884,6 +928,10 @@ async fn main() -> Result<()> {
         .route(
             "/v1/projects/{id}/branches/{branch}/connection",
             get(get_connection),
+        )
+        .route(
+            "/v1/projects/{id}/branches/{branch}/service-connection",
+            get(get_service_connection),
         )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(address).await?;
