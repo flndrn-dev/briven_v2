@@ -58,7 +58,7 @@ api_pid=$!
 proxy --auth-backend control-plane --auth-endpoint http://127.0.0.1:8787/proxy/ \
   --proxy 0.0.0.0:5432 --mgmt 127.0.0.1:7000 --http 127.0.0.1:7001 \
   --tls-key /etc/briven/proxy-tls/server.key --tls-cert /etc/briven/proxy-tls/server.crt \
-  --project-info-cache size=0 --wake-compute-cache size=0 &
+  --project-info-cache size=0,max_roles=0,gc_interval=60s --wake-compute-cache size=0 &
 proxy_pid=$!
 while kill -0 "$api_pid" 2>/dev/null && kill -0 "$proxy_pid" 2>/dev/null; do
   sleep 2
