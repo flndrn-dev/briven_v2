@@ -1,0 +1,18 @@
+# Enable only after private/staged acceptance. The control API, storage and
+# administrator compute ports remain inside the closed engine network.
+services:
+  engine:
+    environment:
+      BRIVEN_PUBLIC_DATABASE_ENABLED: 'true'
+    ports:
+      - '0.0.0.0:5432:5432'
+    volumes:
+      - /etc/briven/public-postgres-tls:/etc/briven/public-proxy-certs:ro
+    networks:
+      briven-back-room:
+        aliases: [briven-customer-db]
+      postgres-ingress: {}
+
+networks:
+  postgres-ingress:
+    driver: bridge

@@ -20,8 +20,14 @@ if [ ! -s /proxy-tls/server.crt ] || ! openssl x509 -in /proxy-tls/server.crt -c
     -CAcreateserial -days 365 -sha256 -extfile /proxy-tls/extensions.cnf -out /proxy-tls/server.crt >/dev/null 2>&1
 fi
 openssl verify -CAfile /ca-public/ca.crt -verify_hostname briven-customer-db /proxy-tls/server.crt >/dev/null
+mkdir -p /proxy-tls/private
+cp /proxy-tls/server.key /proxy-tls/private/tls.key
+cp /proxy-tls/server.crt /proxy-tls/private/tls.crt
 chown -R 1000:1000 /proxy-tls
 chmod 755 /proxy-tls
 chmod 600 /proxy-tls/server.key
 chmod 644 /proxy-tls/server.crt
+chmod 755 /proxy-tls/private
+chmod 600 /proxy-tls/private/tls.key
+chmod 644 /proxy-tls/private/tls.crt
 echo 'private customer proxy certificate ready'

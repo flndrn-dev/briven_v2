@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Briven PostgreSQL public TLS certificate
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+RandomizedDelaySec=1min
+Persistent=true
+Unit=briven-public-postgres-certificate.service
+
+[Install]
+WantedBy=timers.target

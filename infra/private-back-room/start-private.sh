@@ -57,13 +57,44 @@ api_pid=$!
 # The proxy runs in this namespace so customer computes remain loopback-only.
 # The inherited client appends a path segment without removing an empty final
 # segment, so a trailing slash would send callbacks to /proxy//method.
-proxy --auth-backend control-plane --auth-endpoint http://127.0.0.1:8787/proxy \
+start_proxy() {
+  tls_key=/etc/briven/proxy-tls/server.key
+  tls_cert=/etc/briven/proxy-tls/server.crt
+  if [ "${BRIVEN_PUBLIC_DATABASE_ENABLED:-false}" = true ]; then
+    certificate_generation=$(readlink /etc/briven/public-proxy-certs/current)
+    tls_key=/etc/briven/public-proxy-certs/$certificate_generation/tls.key
+    tls_cert=/etc/briven/public-proxy-certs/$certificate_generation/tls.crt
+    test -r "$tls_key"
+    test -r "$tls_cert"
+    test -r /etc/briven/proxy-tls/private/tls.crt
+  fi
+  proxy --auth-backend control-plane --auth-endpoint http://127.0.0.1:8787/proxy \
   --proxy 0.0.0.0:5432 --mgmt 127.0.0.1:7000 --http 127.0.0.1:7001 \
-  --tls-key /etc/briven/proxy-tls/server.key --tls-cert /etc/briven/proxy-tls/server.crt \
+  --tls-key "$tls_key" --tls-cert "$tls_cert" --certs-dir /etc/briven/proxy-tls \
   --project-info-cache size=0,max_roles=0,gc_interval=60s --wake-compute-cache size=0 &
-proxy_pid=$!
+  proxy_pid=$!
+}
+certificate_generation=
+start_proxy
 while kill -0 "$api_pid" 2>/dev/null && kill -0 "$proxy_pid" 2>/dev/null; do
   sleep 2
+  if [ "${BRIVEN_PUBLIC_DATABASE_ENABLED:-false}" = true ]; then
+    next_generation=$(readlink /etc/briven/public-proxy-certs/current)
+    if [ "$next_generation" != "$certificate_generation" ]; then
+      # Renew TLS without restarting customer computes or the control API.
+      # Close existing proxy sessions rather than ever replaying their writes.
+      kill "$proxy_pid" 2>/dev/null || true
+      attempts=0
+      while kill -0 "$proxy_pid" 2>/dev/null && [ "$attempts" -lt 10 ]; do
+        sleep 1
+        attempts=$((attempts + 1))
+      done
+      kill -9 "$proxy_pid" 2>/dev/null || true
+      wait "$proxy_pid" 2>/dev/null || true
+      start_proxy
+      echo 'public PostgreSQL TLS certificate refreshed'
+    fi
+  fi
 done
 if kill -0 "$api_pid" 2>/dev/null; then
   wait "$proxy_pid"
