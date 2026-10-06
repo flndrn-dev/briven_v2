@@ -74,3 +74,15 @@ Run `37466644490` successfully published all five private images. The first stag
 Website commit `42750af` validates customer leases with the same strict tenant/role/expiry checks as service leases and rewrites both shell and engine-control connection responses to the configured public hostname with `sslmode=verify-full`. Five connection tests and API typecheck pass. Updated image build `37493485489` is running. Public hostname remains unset in staging.
 
 The scoped public certificate exporter and hourly systemd timer are installed on KVM2 and the initial export passed certificate/key, hostname, validity and system-chain checks. No database port has been opened. The public proxy compose override and certificate renewal handling still require deployment and live proof after private website acceptance.
+
+### Live private acceptance findings
+
+The stage deployment succeeded. Fresh control migrations ran, and the owner account was created through platform Auth using the previously supplied credentials. Password sign-in and the authenticated dashboard API pass. Both new platform stores contain no imported accounts. Customer Auth enrollment returns the configured unavailable response.
+
+Website project `p_01M4900GERJS2S8R2FMJCEXCJ8` maps to engine tenant `7ceda45b616eb238ee1633be5530ec93`. Studio vector DDL, writes and similarity search pass. Customer SQL cannot read platform metadata; trusted metadata access works. A failed transaction rolls back its preceding write, and customer credential rotation preserves service access. Schema deployment succeeds and its tables are customer-owned.
+
+Credential rotation exposed a real compatibility issue: the inherited proxy emits `XX000` for password rejection, while the website clients only refreshed on native PostgreSQL `28P01`. Website commit `7aa6570` recognizes only the exact proxy password error for the expected role, and refreshes only during connection checkout before a transaction. Six connection tests and API/runtime/realtime/web typechecks pass. CI run `37497583018` builds `serverless-20261006-3`; this fix is not yet deployed.
+
+The configured AI gateway at `ai.flndrn.com` answers its application health route, but model listing, chat and generation return 502. Actual AI query explanation therefore fails acceptance. The owner has been asked whether cutover should wait for working AI or launch with AI temporarily unavailable. Independent PostgreSQL/function/realtime acceptance continues; no AI completion or cutover is claimed.
+
+Automatic idle suspension, load-based compute scaling and customer-managed snapshot restore remain open beyond this initial cutover. Tested compute wake-up and operator backup/restore do not establish completion of those features.

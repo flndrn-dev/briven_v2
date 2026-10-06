@@ -10,7 +10,7 @@ x-logging: &briven-logging
 
 services:
   proxy-certificates:
-    image: ghcr.io/flndrn-dev/briven-engine@sha256:0748221061eeae28fd97ebe397f6616e8732010d21d2193b84f31f04bd9e9081
+    image: ghcr.io/flndrn-dev/briven-engine@sha256:6566b886bdc31cab8fe40f0db006571b9d38b9c39551b8d44a5321a0a0cfa399
     user: '0:0'
     entrypoint: ['/bin/sh', '/create-proxy-certificates.sh']
     volumes:
