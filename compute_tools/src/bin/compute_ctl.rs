@@ -97,6 +97,10 @@ struct Cli {
     #[arg(short = 'C', long, value_name = "DATABASE_URL")]
     pub connstr: String,
 
+    /// Disconnect the activity monitor after each bounded observation.
+    #[arg(long)]
+    pub ephemeral_monitor: bool,
+
     #[arg(
         long,
         default_value = "neon_superuser",
@@ -250,6 +254,7 @@ fn main() -> Result<()> {
         ComputeNodeParams {
             compute_id: cli.compute_id,
             connstr,
+            ephemeral_monitor: cli.ephemeral_monitor,
             privileged_role_name: cli.privileged_role_name.clone(),
             pgdata: cli.pgdata.clone(),
             pgbin: cli.pgbin.clone(),

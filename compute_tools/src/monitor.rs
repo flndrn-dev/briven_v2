@@ -121,6 +121,10 @@ impl ComputeMonitor {
         // the compute fully started before monitoring activity.
         wait_for_postgres_start(&self.compute);
 
+        if self.compute.params.ephemeral_monitor {
+            return self.run_ephemeral(&conf);
+        }
+
         // Define `client` outside of the loop to reuse existing connection if it's active.
         let mut client = conf.connect(NoTls);
 
@@ -199,6 +203,31 @@ impl ComputeMonitor {
         }
 
         // Graceful termination path
+        Ok(())
+    }
+
+    /// Local serverless computes must not keep themselves awake with a
+    /// permanent monitoring session. No role or application-name exclusion is
+    /// needed in the scheduler: each check finishes and disconnects before the
+    /// monitor waits, including failed checks and smart shutdown rejection.
+    fn run_ephemeral(&mut self, conf: &postgres::Config) -> anyhow::Result<()> {
+        let conf = bounded_monitor_config(conf);
+        while !self.check_interrupts() {
+            match poll_monitor(&conf, |cli| self.check(cli)) {
+                Ok(()) => {
+                    self.report_up();
+                    self.compute.update_last_active(self.last_active);
+                }
+                Err(_) => {
+                    if self.check_interrupts() {
+                        break;
+                    }
+                    self.report_down();
+                }
+            }
+            self.last_checked = Utc::now();
+            thread::sleep(MONITOR_CHECK_INTERVAL);
+        }
         Ok(())
     }
 
@@ -348,6 +377,32 @@ impl ComputeMonitor {
 
         Ok(())
     }
+}
+
+fn bounded_monitor_config(conf: &postgres::Config) -> postgres::Config {
+    let mut conf = conf.clone();
+    conf.connect_timeout(Duration::from_secs(5));
+    let options = format!(
+        "{} -c statement_timeout=5s -c lock_timeout=5s",
+        conf.get_options().unwrap_or("")
+    );
+    conf.options(&options);
+    conf
+}
+
+fn poll_monitor<T>(
+    conf: &postgres::Config,
+    check: impl FnOnce(&mut Client) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let mut client = conf.connect(NoTls)?;
+    let result = check(&mut client);
+    // Explicit close waits for the connection driver on both success and
+    // failure; merely keeping a disconnected client until the next poll would
+    // still prevent the idle scheduler from observing an empty backend set.
+    let closed = client.close();
+    let value = result?;
+    closed?;
+    Ok(value)
 }
 
 // Hang on condition variable waiting until the compute status is `Running`.
@@ -522,4 +577,99 @@ pub fn launch_monitor(compute: &Arc<ComputeNode>) -> thread::JoinHandle<()> {
             }
         })
         .expect("cannot launch compute monitor thread")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ephemeral_monitor_bounds_observation_and_preserves_options() {
+        let mut original = postgres::Config::new();
+        original.options("-c search_path='' -c statement_timeout=0");
+        let bounded = bounded_monitor_config(&original);
+        assert_eq!(bounded.get_connect_timeout(), Some(&Duration::from_secs(5)));
+        assert_eq!(
+            bounded.get_options(),
+            Some(
+                "-c search_path='' -c statement_timeout=0 -c statement_timeout=5s -c lock_timeout=5s"
+            )
+        );
+        assert_eq!(
+            original.get_options(),
+            Some("-c search_path='' -c statement_timeout=0")
+        );
+    }
+
+    #[test]
+    fn ephemeral_monitor_closes_after_success_and_failed_query() {
+        let Ok(uri) = std::env::var("BRIVEN_TEST_DISPOSABLE_LIFECYCLE_URL") else {
+            return;
+        };
+        let mut config: postgres::Config = uri.parse().unwrap();
+        assert!(
+            config
+                .get_dbname()
+                .unwrap()
+                .starts_with("briven_lifecycle_fixture_")
+        );
+        assert!(config.get_hosts().iter().all(|host| matches!(host,
+            postgres::config::Host::Unix(path) if path.file_name().is_some_and(|v| v == "socket")
+                && path.parent().is_some_and(|directory|
+                    directory.parent() == Some(std::path::Path::new("/private/tmp"))
+                    && directory.file_name().is_some_and(|v|
+                        v.to_string_lossy().starts_with("briven-lifecycle-rust-")))
+        )), "monitor test requires only its own disposable Unix socket");
+        let mut observer = config.connect(NoTls).unwrap();
+        config.application_name("compute_ctl:compute_monitor");
+        let config = bounded_monitor_config(&config);
+        let assert_closed = |observer: &mut Client, pid: i32| {
+            for _ in 0..50 {
+                let exists: bool = observer
+                    .query_one(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)",
+                        &[&pid],
+                    )
+                    .unwrap()
+                    .get(0);
+                if !exists {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            panic!("monitor retained its backend after completing a poll");
+        };
+        let pid = poll_monitor(&config, |client| {
+            let row = client.query_one(
+                "SELECT pg_backend_pid(), current_setting('statement_timeout')",
+                &[],
+            )?;
+            assert_eq!(row.get::<_, String>(1), "5s");
+            Ok(row.get::<_, i32>(0))
+        })
+        .unwrap();
+        assert_closed(&mut observer, pid);
+        let mut failed_pid = None;
+        let failed = poll_monitor(&config, |client| {
+            failed_pid = Some(
+                client
+                    .query_one("SELECT pg_backend_pid()", &[])?
+                    .get::<_, i32>(0),
+            );
+            client.query_one("SELECT 1 / 0", &[])?;
+            Ok(())
+        });
+        assert!(failed.is_err());
+        assert_closed(&mut observer, failed_pid.unwrap());
+        // The unrelated session remains usable. No role/name-based exclusion
+        // or backend termination is involved in releasing monitor sessions.
+        assert_eq!(
+            observer
+                .query_one("SELECT 7", &[])
+                .unwrap()
+                .get::<_, i32>(0),
+            7
+        );
+        observer.close().unwrap();
+    }
 }

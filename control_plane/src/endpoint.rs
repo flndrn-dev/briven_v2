@@ -925,6 +925,8 @@ impl Endpoint {
         // TODO: It would be nice if we generated compute IDs with the same
         // algorithm as the real control plane.
         .args(["--compute-id", &self.endpoint_id])
+        // A permanent management session would block smart idle shutdown.
+        .arg("--ephemeral-monitor")
         .stdin(std::process::Stdio::null())
         .stderr(logfile.try_clone()?)
         .stdout(logfile);

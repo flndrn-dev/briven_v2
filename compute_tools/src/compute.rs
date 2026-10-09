@@ -89,6 +89,9 @@ pub struct ComputeNodeParams {
     /// Url type maintains proper escaping
     pub connstr: url::Url,
 
+    /// Release the internal monitor connection between checks for idle sleep.
+    pub ephemeral_monitor: bool,
+
     /// The name of the 'weak' superuser role, which we give to the users.
     /// It follows the allow list approach, i.e., we take a standard role
     /// and grant it extra permissions with explicit GRANTs here and there,
