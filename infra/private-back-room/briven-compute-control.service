@@ -6,7 +6,8 @@ Requires=brivencompute.slice
 [Service]
 Type=simple
 User=root
-Group=1000
+Group=root
+Slice=brivencompute.slice
 RuntimeDirectory=briven-compute-control
 RuntimeDirectoryMode=0750
 ExecStart=/usr/bin/python3 /usr/local/libexec/briven/compute-resource-host.py

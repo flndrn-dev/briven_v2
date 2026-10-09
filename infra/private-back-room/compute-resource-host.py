@@ -226,6 +226,13 @@ def serve_request(connection):
 def main():
     require(os.geteuid() == 0)
     parent()
+    directory = Path(SOCKET).parent
+    require(directory.is_dir() and not directory.is_symlink() and directory.stat().st_uid == 0)
+    # The container's numeric GID need not have a host NSS group entry.
+    # RuntimeDirectory is created as root:root, then this fixed directory is
+    # assigned the kernel numeric GID. No new host account/group is created.
+    os.chown(directory, 0, 1000)
+    os.chmod(directory, 0o750)
     # RuntimeDirectory owns this fixed path; never replace an existing socket.
     require(not os.path.lexists(SOCKET))
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
