@@ -671,6 +671,63 @@ struct EndpointStopCmdArgs {
     #[clap(long)]
     #[clap(default_value = "fast")]
     mode: EndpointTerminateMode,
+
+    /// Request smart shutdown and return while existing sessions finish.
+    /// Only valid with --mode smart and without --destroy.
+    #[clap(long)]
+    no_wait: bool,
+}
+
+impl EndpointStopCmdArgs {
+    fn validate(&self) -> Result<()> {
+        if self.no_wait && (!matches!(self.mode, EndpointTerminateMode::Smart) || self.destroy) {
+            bail!("--no-wait requires --mode smart and cannot be combined with --destroy");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod graceful_stop_tests {
+    use super::{Cli, EndpointCmd, EndpointTerminateMode, NeonLocalCmd};
+    use clap::Parser;
+
+    fn stop_args(extra: &[&str]) -> super::EndpointStopCmdArgs {
+        let mut args = vec!["briven_local", "endpoint", "stop", "ep-isolated"];
+        args.extend_from_slice(extra);
+        let Cli {
+            command: NeonLocalCmd::Endpoint(EndpointCmd::Stop(args)),
+        } = Cli::try_parse_from(args).unwrap()
+        else {
+            panic!("expected endpoint stop");
+        };
+        args
+    }
+
+    #[test]
+    fn ordinary_stop_keeps_the_existing_waiting_fast_mode() {
+        let args = stop_args(&[]);
+        assert!(matches!(args.mode, EndpointTerminateMode::Fast));
+        assert!(!args.no_wait && !args.destroy);
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn graceful_nonblocking_stop_rejects_force_and_destroy_combinations() {
+        assert!(
+            stop_args(&["--mode", "smart", "--no-wait"])
+                .validate()
+                .is_ok()
+        );
+        for extra in [
+            vec!["--no-wait"],
+            vec!["--mode", "fast", "--no-wait"],
+            vec!["--mode", "immediate", "--no-wait"],
+            vec!["--mode", "smart", "--no-wait", "--destroy"],
+        ] {
+            assert!(stop_args(&extra).validate().is_err());
+        }
+    }
 }
 
 /// Update the pageservers in the spec file of the compute endpoint
@@ -1617,14 +1674,20 @@ async fn handle_endpoint(subcmd: &EndpointCmd, env: &local_env::LocalEnv) -> Res
             endpoint.refresh_configuration().await?;
         }
         EndpointCmd::Stop(args) => {
+            args.validate()?;
             let endpoint_id = &args.endpoint_id;
             let endpoint = cplane
                 .endpoints
                 .get(endpoint_id)
                 .with_context(|| format!("postgres endpoint {endpoint_id} is not found"))?;
-            match endpoint.stop(args.mode, args.destroy).await?.lsn {
-                Some(lsn) => println!("{lsn}"),
-                None => println!("null"),
+            if args.no_wait {
+                endpoint.request_smart_shutdown()?;
+                println!("null");
+            } else {
+                match endpoint.stop(args.mode, args.destroy).await?.lsn {
+                    Some(lsn) => println!("{lsn}"),
+                    None => println!("null"),
+                }
             }
         }
         EndpointCmd::GenerateJwt(args) => {

@@ -368,6 +368,8 @@ impl Display for EndpointStatus {
 
 #[derive(Default, Clone, Copy, clap::ValueEnum)]
 pub enum EndpointTerminateMode {
+    /// Let existing sessions finish normally before PostgreSQL exits.
+    Smart,
     #[default]
     /// Use pg_ctl stop -m fast
     Fast,
@@ -380,6 +382,7 @@ pub enum EndpointTerminateMode {
 impl std::fmt::Display for EndpointTerminateMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match &self {
+            EndpointTerminateMode::Smart => "smart",
             EndpointTerminateMode::Fast => "fast",
             EndpointTerminateMode::Immediate => "immediate",
             EndpointTerminateMode::ImmediateTerminate => "immediate-terminate",
@@ -1137,6 +1140,12 @@ impl Endpoint {
             .await
     }
 
+    /// Request graceful shutdown without waiting or signalling compute_ctl.
+    /// Existing sessions may finish; the caller reconciles actual exit later.
+    pub fn request_smart_shutdown(&self) -> Result<()> {
+        self.pg_ctl(&["-m", "smart", "-W", "stop"], &None)
+    }
+
     pub async fn stop(
         &self,
         mode: EndpointTerminateMode,
@@ -1167,7 +1176,11 @@ impl Endpoint {
         // waiting. Sometimes we do *not* want this cleanup: tests intentionally
         // do stop when majority of safekeepers is down, so sync-safekeepers
         // would hang otherwise. This could be a separate flag though.
-        let send_sigterm = destroy || !matches!(mode, EndpointTerminateMode::Fast);
+        let send_sigterm = destroy
+            || !matches!(
+                mode,
+                EndpointTerminateMode::Fast | EndpointTerminateMode::Smart
+            );
         self.wait_for_compute_ctl_to_exit(send_sigterm)?;
         if destroy {
             println!(
