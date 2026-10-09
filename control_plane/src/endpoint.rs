@@ -581,6 +581,10 @@ impl Endpoint {
         self.env.endpoints_path().join(&self.endpoint_id)
     }
 
+    pub fn id(&self) -> &str {
+        &self.endpoint_id
+    }
+
     pub fn pgdata(&self) -> PathBuf {
         self.endpoint_path().join("pgdata")
     }
@@ -707,7 +711,19 @@ impl Endpoint {
             anyhow::bail!("The endpoint is already running");
         }
 
-        let postgresql_conf = self.read_postgresql_conf()?;
+        let resources = crate::compute_resource::enabled()?;
+        if resources {
+            // Refuse capacity before replacing the reconstructable PG cache.
+            // The fixed launcher performs a second serialized admission before
+            // any compute_ctl/PostgreSQL process is allocated.
+            crate::compute_resource::admit_start(&self.tenant_id.to_string())?;
+        }
+        let mut postgresql_conf = self.read_postgresql_conf()?;
+        if resources {
+            // Fit the fixed 512 MiB resource class; kernel limits remain the
+            // authoritative bound even if a customer raises a session GUC.
+            postgresql_conf.push_str("\nmax_connections = 30\nshared_buffers = '32MB'\nwork_mem = '4MB'\nmaintenance_work_mem = '64MB'\nmax_parallel_workers_per_gather = 0\nhuge_pages = off\n");
+        }
 
         // We always start the compute node from scratch, so if the Postgres
         // data dir exists from a previous launch, remove it first.
@@ -879,7 +895,13 @@ impl Endpoint {
             let conn_str = self.connstr("test", "brivendb");
             println!("Also at '{conn_str}'");
         }
-        let mut cmd = Command::new(self.env.neon_distrib_dir.join("compute_ctl"));
+        let mut cmd = if resources {
+            let mut command = Command::new(self.env.neon_distrib_dir.join("briven_compute_launch"));
+            command.arg(&self.endpoint_id);
+            command
+        } else {
+            Command::new(self.env.neon_distrib_dir.join("compute_ctl"))
+        };
         cmd.args([
             "--external-http-port",
             &self.external_http_address.port().to_string(),

@@ -80,15 +80,7 @@ pub(super) async fn endpoint(
     {
         return Err(ApiError(StatusCode::NOT_FOUND, "endpoint not found"));
     }
-    if endpoint.status() != EndpointStatus::Running {
-        tokio::time::timeout(
-            Duration::from_secs(90),
-            run_cli(state, &["endpoint", "start", id]),
-        )
-        .await
-        .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "compute resume timed out"))??;
-    }
-    Ok(endpoint)
+    lifecycle_runtime::demand(state, endpoint).await
 }
 
 pub(super) async fn access_control(
@@ -117,9 +109,12 @@ pub(super) async fn access_control(
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         let (client, connection) =
             tokio_postgres::connect(&format!("{admin_uri}?sslmode=disable"), NoTls).await?;
-        let task = tokio::spawn(async move {
-            let _ = connection.await;
-        });
+        let task = scopeguard::guard(
+            tokio::spawn(async move {
+                let _ = connection.await;
+            }),
+            |task| task.abort(),
+        );
         let row = client
             .query_opt(
                 "SELECT rolpassword FROM pg_authid WHERE rolname = $1 AND rolcanlogin

@@ -209,7 +209,7 @@ impl Catalog {
 
 const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("migrations/0001_projects.sql"))];
 
-async fn migrate(client: &mut Client) -> Result<()> {
+pub(super) async fn migrate(client: &mut Client) -> Result<()> {
     let transaction = client.transaction().await?;
     // Serialize startup migrations across API replicas using the same catalog.
     transaction
@@ -283,7 +283,7 @@ fn validate_catalog_dsn(dsn: &str) -> Result<()> {
     Ok(())
 }
 
-async fn pg_client(dsn: &str) -> Result<Client> {
+pub(super) async fn pg_client(dsn: &str) -> Result<Client> {
     let mut config: tokio_postgres::Config = dsn.parse()?;
     let remote = config.get_hosts().iter().any(|host| match host {
         Host::Tcp(name) => !is_loopback_host(name),

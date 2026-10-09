@@ -94,6 +94,8 @@ services:
       NEON_PROXY_TO_CONTROLPLANE_TOKEN: ${BRIVEN_PROXY_CONTROL_SECRET:?set independent proxy control secret}
       BRIVEN_CUSTOMER_PROXY_HOST: briven-customer-db
       BRIVEN_CUSTOMER_PROXY_PORT: '5432'
+      BRIVEN_COMPUTE_LIFECYCLE_ENABLED: ${BRIVEN_COMPUTE_LIFECYCLE_ENABLED:-false}
+      BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON: ${BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON:-[]}
       BRIVEN_CONTROL_DATABASE_URL: postgres://briven_catalog:${BRIVEN_CONTROL_DB_PASSWORD:?set a URL-safe value in the Dokploy panel}@/briven_control?host=/var/run/postgresql
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in the Dokploy panel}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in the Dokploy panel}

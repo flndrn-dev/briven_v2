@@ -1,0 +1,12 @@
+[Unit]
+Description=Briven bounded private engine and compute resource envelope
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUQuota=300%
+CPUQuotaPeriodSec=100ms
+MemoryMax=8G
+MemorySwapMax=0
+TasksMax=1024

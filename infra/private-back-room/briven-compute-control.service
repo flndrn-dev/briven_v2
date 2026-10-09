@@ -1,0 +1,24 @@
+[Unit]
+Description=Briven fixed compute resource controller
+After=docker.service
+Requires=brivencompute.slice
+
+[Service]
+Type=simple
+User=root
+Group=1000
+RuntimeDirectory=briven-compute-control
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/python3 /usr/local/libexec/briven/compute-resource-host.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/run/briven-compute-control
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

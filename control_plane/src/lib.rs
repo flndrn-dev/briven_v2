@@ -8,6 +8,7 @@
 
 mod background_process;
 pub mod broker;
+pub mod compute_resource;
 pub mod endpoint;
 pub mod endpoint_storage;
 pub mod local_env;

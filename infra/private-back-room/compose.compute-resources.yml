@@ -1,0 +1,15 @@
+# Explicit opt-in overlay. Install the fixed host resource service and pass kernel
+# acceptance BEFORE selecting this file in the verified Dokploy engine command.
+# No extra capabilities, host PID namespace, Docker socket or public port.
+services:
+  engine:
+    cgroup_parent: brivencompute.slice
+    environment:
+      BRIVEN_COMPUTE_RESOURCE_SOCKET: /run/briven-compute-control/control.sock
+    volumes:
+      - type: bind
+        source: /run/briven-compute-control
+        target: /run/briven-compute-control
+        read_only: true
+        bind:
+          create_host_path: false

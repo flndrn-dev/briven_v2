@@ -28,6 +28,14 @@ mod auth;
 mod catalog;
 #[path = "../briven_control_api/customer_credential.rs"]
 mod customer_credential;
+#[path = "../briven_control_api/lifecycle.rs"]
+mod lifecycle;
+#[path = "../briven_control_api/lifecycle_process.rs"]
+mod lifecycle_process;
+#[path = "../briven_control_api/lifecycle_runtime.rs"]
+mod lifecycle_runtime;
+#[path = "../briven_control_api/lifecycle_store.rs"]
+mod lifecycle_store;
 #[path = "../briven_control_api/proxy_control.rs"]
 mod proxy_control;
 #[path = "../briven_control_api/saved_copy.rs"]
@@ -44,6 +52,8 @@ struct AppState {
     proxy_auth: Arc<proxy_control::ProxyAuth>,
     catalog: Catalog,
     gate: Arc<Mutex<()>>,
+    lifecycle_config: Arc<lifecycle_runtime::Config>,
+    lifecycle_store: lifecycle_store::Store,
 }
 
 #[derive(Deserialize)]
@@ -217,6 +227,12 @@ async fn create_endpoint(
 ) -> ApiResult<()> {
     let env = LocalEnv::load_config(&state.repo).map_err(engine)?;
     let plane = ComputeControlPlane::load(env).map_err(engine)?;
+    control_plane::compute_resource::admit_definition(tenant_id, &plane).map_err(|_| {
+        ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "compute definition or active capacity limit reached",
+        )
+    })?;
     let occupied = plane
         .endpoints
         .values()
@@ -273,9 +289,12 @@ async fn can_query(uri: &str) -> bool {
     tokio::time::timeout(Duration::from_secs(5), async {
         let (client, connection) =
             tokio_postgres::connect(&format!("{uri}?sslmode=disable"), NoTls).await?;
-        let task = tokio::spawn(async move {
-            let _ = connection.await;
-        });
+        let task = scopeguard::guard(
+            tokio::spawn(async move {
+                let _ = connection.await;
+            }),
+            |task| task.abort(),
+        );
         let result = client.simple_query("SELECT 1").await;
         task.abort();
         result.map(|_| ())
@@ -396,23 +415,13 @@ async fn ensure_main_compute(
         create_endpoint(state, tenant_id, "main", &endpoint_id).await?;
         plane = load_plane(state)?;
     }
-    let already_running = {
-        let endpoint = plane.endpoints.get(&endpoint_id).ok_or(ApiError(
-            StatusCode::BAD_GATEWAY,
-            "created compute is unavailable",
-        ))?;
-        // Starting a compute that is already running is an error, so only start
-        // one that stopped or never finished starting.
-        endpoint.status() == EndpointStatus::Running
-    };
-    if !already_running {
-        run_cli(state, &["endpoint", "start", &endpoint_id]).await?;
-        plane = load_plane(state)?;
-    }
     let endpoint = plane.endpoints.get(&endpoint_id).ok_or(ApiError(
         StatusCode::BAD_GATEWAY,
         "created compute is unavailable",
     ))?;
+    // A provisioning retry uses the same process/recovery checks as demand;
+    // a live draining or uncertain process must never have pgdata replaced.
+    let endpoint = lifecycle_runtime::demand(state, Arc::clone(endpoint)).await?;
     let uri = endpoint.connstr("cloud_admin", "postgres");
     if !can_query(&uri).await {
         return Err(ApiError(
@@ -664,14 +673,23 @@ async fn create_compute(
         .get_branch_timeline_id(&branch, tenant_id)
         .ok_or(ApiError(StatusCode::NOT_FOUND, "branch not found"))?;
     let plane = ComputeControlPlane::load(env).map_err(engine)?;
-    if plane
-        .endpoints
-        .values()
-        .any(|endpoint| endpoint.tenant_id == tenant_id && endpoint.timeline_id == timeline_id)
-    {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "branch compute already exists",
+    if let Some((existing_id, _)) = plane.endpoints.iter().find(|(_, endpoint)| {
+        endpoint.tenant_id == tenant_id && endpoint.timeline_id == timeline_id
+    }) {
+        let endpoint = proxy_control::endpoint(&state, existing_id).await?;
+        if !can_query(&endpoint.connstr("cloud_admin", "postgres")).await {
+            return Err(ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "branch compute is unavailable",
+            ));
+        }
+        return Ok((
+            StatusCode::OK,
+            Json(Compute {
+                id: existing_id.clone(),
+                branch,
+                status: "running".to_owned(),
+            }),
         ));
     }
     let endpoint_id = format!("ep-{id}-{branch}");
@@ -817,12 +835,8 @@ async fn issue_connection(
                 StatusCode::CONFLICT,
                 "branch has no running compute",
             ))?;
-        let (endpoint_id, endpoint) = endpoint;
-        let endpoint = if endpoint.status() != EndpointStatus::Running {
-            proxy_control::endpoint(&state, endpoint_id).await?
-        } else {
-            Arc::clone(endpoint)
-        };
+        let (endpoint_id, _) = endpoint;
+        let endpoint = proxy_control::endpoint(&state, endpoint_id).await?;
         let admin_uri = endpoint.connstr("cloud_admin", "postgres");
         if !can_query(&admin_uri).await {
             return Err(ApiError(
@@ -943,9 +957,21 @@ async fn main() -> Result<()> {
     if !address.ip().is_loopback() && !auth.uses_customer_identity() {
         bail!("non-loopback control API requires signed customer identity");
     }
+    let api_lock_path = repo.join("briven-control-api.pid");
+    let _api_guard = utils::pid_file::claim_for_current_process(
+        camino::Utf8Path::from_path(&api_lock_path)
+            .context("control repository path must be UTF-8")?,
+    )
+    .context("another control API already owns this engine repository")?;
     let catalog = Catalog::from_env(repo.clone()).await?;
     if auth.uses_customer_identity() && matches!(catalog, Catalog::Local(_)) {
         bail!("signed customer mode requires BRIVEN_CONTROL_DATABASE_URL");
+    }
+    let lifecycle_config = Arc::new(lifecycle_runtime::Config::from_env()?);
+    let lifecycle_store = lifecycle_store::Store::open(&catalog).await?;
+    if control_plane::compute_resource::enabled()? {
+        control_plane::compute_resource::preflight()
+            .context("verify fixed host compute resource ceiling")?;
     }
     let state = AppState {
         repo,
@@ -954,7 +980,10 @@ async fn main() -> Result<()> {
         proxy_auth: Arc::new(proxy_control::ProxyAuth::from_env()?),
         catalog,
         gate: Arc::new(Mutex::new(())),
+        lifecycle_config,
+        lifecycle_store,
     };
+    lifecycle_runtime::spawn(state.clone());
     let app = Router::new()
         .route("/healthz", get(health))
         .route(
@@ -972,6 +1001,10 @@ async fn main() -> Result<()> {
         .route(
             "/v1/projects/{id}/branches/{branch}/computes",
             post(create_compute),
+        )
+        .route(
+            "/v1/projects/{id}/branches/{branch}/lifecycle",
+            get(lifecycle_runtime::status).post(lifecycle_runtime::configure),
         )
         .route(
             "/v1/projects/{id}/branches/{branch}/connection",
