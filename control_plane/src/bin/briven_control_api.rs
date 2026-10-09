@@ -20,6 +20,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_postgres::NoTls;
 use utils::id::{TenantId, TimelineId};
+use utils::lsn::Lsn;
 
 #[path = "../briven_control_api/auth.rs"]
 mod auth;
@@ -29,6 +30,8 @@ mod catalog;
 mod customer_credential;
 #[path = "../briven_control_api/proxy_control.rs"]
 mod proxy_control;
+#[path = "../briven_control_api/saved_copy.rs"]
+mod saved_copy;
 
 use auth::{AuthConfig, Principal};
 use catalog::{Catalog, CreateError, Project, ProjectState};
@@ -54,6 +57,45 @@ struct CreateProject {
 struct CreateBranch {
     name: String,
     parent: Option<String>,
+    start_lsn: Option<Lsn>,
+    timeline_id: Option<TimelineId>,
+}
+
+impl CreateBranch {
+    fn command(&self, tenant: &str, timeline: &str) -> Vec<String> {
+        let mut args = vec![
+            "timeline",
+            "branch",
+            "--tenant-id",
+            tenant,
+            "--timeline-id",
+            timeline,
+            "--branch-name",
+            &self.name,
+            "--ancestor-branch-name",
+            self.parent.as_deref().unwrap_or("main"),
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        if let Some(lsn) = self.start_lsn {
+            args.extend(["--ancestor-start-lsn".to_owned(), lsn.to_string()]);
+        }
+        if saved_copy::is_saved_copy(&self.name) {
+            args.push("--read-only".to_owned());
+        }
+        args
+    }
+}
+
+fn writable_branch(branch: &str) -> ApiResult<()> {
+    if saved_copy::is_saved_copy(branch) {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "saved copies are read-only",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -515,6 +557,12 @@ async fn create_branch(
     if !valid_name(&input.name) || !valid_name(input.parent.as_deref().unwrap_or("main")) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "invalid branch name"));
     }
+    if input.start_lsn == Some(Lsn::INVALID) {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "invalid branch start position",
+        ));
+    }
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
     let existing = project(&projects, &id)?;
@@ -523,32 +571,30 @@ async fn create_branch(
     }
     let env = LocalEnv::load_config(&state.repo).map_err(engine)?;
     let tenant_id = id.parse::<TenantId>().map_err(internal)?;
-    if env.get_branch_timeline_id(&input.name, tenant_id).is_some() {
+    let mapped = env.get_branch_timeline_id(&input.name, tenant_id);
+    if mapped.is_some() && mapped != input.timeline_id {
         return Err(ApiError(StatusCode::CONFLICT, "branch name already exists"));
     }
     let parent = input.parent.as_deref().unwrap_or("main");
     if env.get_branch_timeline_id(parent, tenant_id).is_none() {
         return Err(ApiError(StatusCode::NOT_FOUND, "parent branch not found"));
     }
-    let timeline_id = TimelineId::generate().to_string();
-    run_cli(
-        &state,
-        &[
-            "timeline",
-            "branch",
-            "--tenant-id",
-            &id,
-            "--timeline-id",
-            &timeline_id,
-            "--branch-name",
-            &input.name,
-            "--ancestor-branch-name",
-            parent,
-        ],
-    )
-    .await?;
+    // The broker persists this ID before dispatch. Reissuing the same storage
+    // request repairs a lost local mapping and uses storage's parameter-bound
+    // idempotency after a crash between timeline creation and registration.
+    let timeline_id = input
+        .timeline_id
+        .unwrap_or_else(TimelineId::generate)
+        .to_string();
+    let command = input.command(&id, &timeline_id);
+    let args = command.iter().map(String::as_str).collect::<Vec<_>>();
+    run_cli(&state, &args).await?;
     Ok((
-        StatusCode::CREATED,
+        if mapped.is_some() {
+            StatusCode::OK
+        } else {
+            StatusCode::CREATED
+        },
         Json(Branch {
             name: input.name,
             id: timeline_id,
@@ -604,6 +650,7 @@ async fn create_compute(
     RoutePath((id, branch)): RoutePath<(String, String)>,
 ) -> ApiResult<(StatusCode, Json<Compute>)> {
     let principal = authorize(&headers, &state.auth, true)?;
+    writable_branch(&branch)?;
     let organization = principal.organization.as_str();
     let _guard = state.gate.lock().await;
     let projects = state.catalog.load(organization).await.map_err(internal)?;
@@ -689,6 +736,7 @@ async fn issue_connection(
     branch: String,
     service_kind: Option<customer_credential::ServiceKind>,
 ) -> ApiResult<Json<Connection>> {
+    writable_branch(&branch)?;
     if state.auth.uses_customer_identity() {
         let principal = if let Some(kind) = service_kind {
             let principal = authenticated(&headers, &state.auth)?;
@@ -942,7 +990,46 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExistingName, ProjectState, existing_name, valid_name};
+    use super::{
+        CreateBranch, ExistingName, ProjectState, existing_name, valid_name, writable_branch,
+    };
+
+    #[test]
+    fn branch_checkpoint_is_explicit_and_cannot_inject_cli_arguments() {
+        let request: CreateBranch =
+            serde_json::from_str(r#"{"name":"sc-0123456789abcdef01234567","startLsn":"0/ABCDEF"}"#)
+                .unwrap();
+        let args = request.command("tenant", "timeline");
+        assert_eq!(args.last().unwrap(), "--read-only");
+        assert_eq!(
+            &args[args.len() - 3..args.len() - 1],
+            &["--ancestor-start-lsn", "0/ABCDEF"]
+        );
+        let ordinary: CreateBranch =
+            serde_json::from_str(r#"{"name":"dev","parent":"main"}"#).unwrap();
+        assert!(
+            !ordinary
+                .command("tenant", "timeline")
+                .iter()
+                .any(|v| v == "--ancestor-start-lsn")
+        );
+        for body in [
+            r#"{"name":"dev","startLsn":"--tenant-id other"}"#,
+            r#"{"name":"dev","startLsn":15}"#,
+            r#"{"name":"dev","unknown":true}"#,
+            r#"{"name":"dev","timelineId":"../../invalid"}"#,
+        ] {
+            assert!(serde_json::from_str::<CreateBranch>(body).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_copy_never_gets_a_compute_or_credentials() {
+        assert!(writable_branch("sc-0123456789abcdef01234567").is_err());
+        assert!(writable_branch("main").is_ok());
+        assert!(writable_branch("rc-0123456789abcdef01234567").is_ok());
+        assert!(writable_branch("sc-customer-branch").is_ok());
+    }
 
     #[test]
     fn names_cannot_escape_cli_or_collide_with_paths() {

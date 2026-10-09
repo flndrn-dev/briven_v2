@@ -258,6 +258,9 @@ struct TimelineBranchCmdArgs {
     /// When using another timeline as base, use a specific Lsn in it instead of the latest one.
     #[clap(long)]
     ancestor_start_lsn: Option<Lsn>,
+    /// Create an immutable timeline without a writable WAL stream.
+    #[arg(long)]
+    read_only: bool,
 }
 
 /// Create a new blank timeline.
@@ -1294,7 +1297,7 @@ async fn handle_timeline(cmd: &TimelineCmd, env: &mut local_env::LocalEnv) -> Re
                 mode: pageserver_api::models::TimelineCreateRequestMode::Branch {
                     ancestor_timeline_id,
                     ancestor_start_lsn: start_lsn,
-                    read_only: false,
+                    read_only: args.read_only,
                     pg_version: None,
                 },
             };
