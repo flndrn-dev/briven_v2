@@ -1,8 +1,10 @@
 # Customer Auth completion design
 
-**Status:** Proposed for owner review. No new recovery policy or Auth implementation is approved by this document alone.
+**Status:** Continue the owner's approved gap-closure work natively. The owner explicitly selected the two-owner recovery policy on 10 October. Source implementation, staged acceptance and real-device verification remain required; approval is not completion evidence.
 
 **Scope:** Complete shared Briven Auth on the accepted serverless PostgreSQL rebuild. Preserve optional extra protection, tenant isolation and weekly reminders defaulting off. This does not replace the current dashboard Better Auth or customer Briven FDI implementation, migrate old customer data, or introduce application-specific payment rules.
+
+**Owner scope correction, 10 October:** SMS delivery, phone-number login and telephone-provider integration are deferred until after intensive application testing. Keep SMS login disabled; do not purchase/configure a provider or suggest free virtual numbers. These optional services are outside current launch acceptance and are not certified complete. Authenticator apps and passkeys do not need SMS or a telephone provider, so their actual-device acceptance remains required alongside configured and enabled email/social/company login checks.
 
 ## Human description
 
@@ -10,7 +12,7 @@ A customer can keep ordinary login or choose extra protection. Authenticator set
 
 An emergency code works once. It opens only the recovery screen, where the customer replaces the lost authenticator, verifies the replacement and saves new codes. It does not unlock the application before recovery is finished.
 
-If every device and emergency code is lost, email access alone cannot remove the protection. The recommended workflow requires two different project owners to review identity through the organization's established independent channels, verify their own accounts again and approve one short recovery opportunity. A project with only one eligible owner cannot use this reset. This recommendation needs the owner's approval before implementation.
+If every device and emergency code is lost, email access alone cannot remove the protection. The approved workflow requires two different project owners to review identity through the organization's established independent channels, verify their own accounts again and approve one short recovery opportunity. A project with only one eligible owner cannot use this reset. The owner approved this policy on 10 October.
 
 An application can ask for identity to be checked again for a particular action. Its backend checks the result with Briven, including the account, project, action and expiry. The browser cannot declare itself verified, and Briven does not decide which business actions need this check.
 
@@ -46,7 +48,7 @@ The July knowledge base describes the older Doltgres architecture. The accepted 
 - Commit replacement proof, previous authenticator invalidation, new hashed emergency-code generation and recovery progress atomically. Normal session issuance requires confirmation of the new code-set generation; revoke the recovery session and older sessions at completion. Interrupted responses reconcile the same progress instead of consuming another emergency code or making another device.
 - Test expiry, replay, simultaneous code submissions, cancelled setup, interrupted completion and cross-project requests against real disposable PostgreSQL.
 
-## Lost all devices and emergency codes: proposed owner review
+## Lost all devices and emergency codes: approved two-owner review
 
 - Offer a recovery request after a valid existing primary-login proof. Requests expose only pending/approved/denied/expired state to their bound user and project. Rate-limit and expire requests after 24 hours; do not send a login or reset grant by email.
 - Require approval from two different currently authorized project owners, each using the dashboard's normal fresh password verification within five minutes. These are two independent approvals, not a claim that the dashboard already has a second-factor enrollment service. Developers, viewers, general API keys and support staff without project-owner authority cannot approve. Both approvals must still be authorized and no older than ten minutes when the grant is created.
@@ -55,7 +57,7 @@ The July knowledge base describes the older Doltgres architecture. The accepted 
 - Revoke old sessions and protection credentials only when the verified replacement is committed. Approval alone must not remove protection. Denial, expiry and cancellation leave it intact.
 - A project lacking two eligible owners must not receive an email-only or automatic platform bypass. Its recovery request stays unavailable with a clear support explanation; changing this authority model requires a separate explicit policy.
 
-This is a proposed policy decision, not evidence of an implemented or tested recovery service.
+The owner approved this two-owner policy on 10 October; the service still requires implementation and acceptance.
 
 ## Stable passkey settings and legacy secrets
 
