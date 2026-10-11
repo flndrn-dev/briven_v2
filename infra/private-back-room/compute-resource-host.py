@@ -16,8 +16,8 @@ import subprocess
 import time
 
 SOCKET = "/run/briven-compute-control/control.sock"
-ENGINE = "compose-calculate-online-transmitter-xubhp5-engine-1"
-COMPOSE_PROJECT = "compose-calculate-online-transmitter-xubhp5"
+ENGINE = "briven-clean-engine-20261011-dsjaqo-engine-1"
+COMPOSE_PROJECT = "briven-clean-engine-20261011-dsjaqo"
 SLICE = "brivencompute.slice"
 CGROUP = Path("/sys/fs/cgroup") / SLICE
 ENDPOINT = re.compile(r"ep-([0-9a-f]{32})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?", re.ASCII)
