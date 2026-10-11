@@ -36,6 +36,22 @@ class ResourceProtocol(unittest.TestCase):
         with self.assertRaises(ValueError):
             host.json.loads('{"version":1,"version":2}', object_pairs_hook=host.unique_fields)
 
+    def test_controller_service_in_parent_slice_is_not_a_compute_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            (parent / "briven-compute-control.service").mkdir()
+            endpoint = "ep-" + "a" * 32
+            group = parent / ("briven-compute-" + endpoint + ".scope")
+            group.mkdir()
+            (group / "cgroup.events").write_text("populated 1\n")
+            for key, value in host.LIMITS.items():
+                (group / key).write_text(value)
+            with patch.object(host, "CGROUP", parent):
+                self.assertEqual(host.active_endpoints(), [endpoint])
+                (parent / "briven-compute-unexpected.service").mkdir()
+                with self.assertRaises(ValueError):
+                    host.active_endpoints()
+
     def test_scope_request_has_only_fixed_properties_and_authenticated_pid(self):
         endpoint, pid = "ep-" + "a" * 32, 4242
         with tempfile.TemporaryDirectory() as directory:

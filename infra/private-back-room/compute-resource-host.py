@@ -76,7 +76,7 @@ def active_endpoints():
     result = []
     for path in CGROUP.iterdir():
         name = path.name
-        if not name.startswith("briven-compute-"):
+        if name == "briven-compute-control.service" or not name.startswith("briven-compute-"):
             continue
         require(name.endswith(".scope"))
         endpoint = name[len("briven-compute-"):-len(".scope")]
