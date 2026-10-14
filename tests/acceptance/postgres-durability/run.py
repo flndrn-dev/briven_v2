@@ -268,6 +268,7 @@ class Acceptance:
         try:self.run_probe('one-safekeeper')
         finally:
             if 1 in self.paused_sks:self.sk_signal(1, 'CONT')
+        self.phase = 'quorum-unavailable'
         self.run_probe('quorum')
         self.phase = 'object-store-outage'
         try:self.run_probe('object-outage')

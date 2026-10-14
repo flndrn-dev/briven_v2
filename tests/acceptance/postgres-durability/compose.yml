@@ -16,6 +16,7 @@ services:
       - ca-private:/ca-private
       - ca-public:/ca-public
       - proxy-tls:/proxy-tls
+      - certificate-workdir:/data
     networks: [fixture]
     mem_limit: 128m
     cpus: 0.25
@@ -31,7 +32,10 @@ services:
     environment:
       MINIO_ROOT_USER: briven-acceptance
       MINIO_ROOT_PASSWORD: ${FIXTURE_OBJECT_PASSWORD:?fixture secret required}
-    volumes: [object-data:/data]
+    volumes:
+      - object-data:/data
+      - object-workdir:/bitnami/minio/data
+      - object-certificates:/certs
     networks: [fixture]
     mem_limit: 512m
     cpus: 0.25
@@ -105,6 +109,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${FIXTURE_OBJECT_PASSWORD:?fixture secret required}
     volumes:
       - repo:/var/lib/briven
+      - engine-workdir:/data
       - catalog-socket:/var/run/postgresql:ro
       - ../../../infra/private-back-room/start-private.sh:/start-private.sh:ro
       - ../../../infra/private-back-room/local-env.toml:/local-env.toml:ro
@@ -136,3 +141,7 @@ volumes:
   catalog-data: {}
   catalog-socket: {}
   repo: {}
+  engine-workdir: {}
+  certificate-workdir: {}
+  object-workdir: {}
+  object-certificates: {}

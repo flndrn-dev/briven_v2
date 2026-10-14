@@ -41,6 +41,13 @@ class FaultGuardTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             guard_container(self.row, self.project, 'engine')
 
+    def test_image_declared_anonymous_volume_is_rejected(self):
+        self.row['Mounts'].append({'Type': 'volume', 'Name': 'f' * 64,
+                                  'Source': '/var/lib/docker/volumes/anonymous/_data',
+                                  'Destination': '/data', 'RW': True})
+        with self.assertRaises(AssertionError):
+            guard_container(self.row, self.project, 'engine')
+
     def test_host_control_mount_and_public_port_are_rejected(self):
         row = copy.deepcopy(self.row)
         row['Mounts'].append({'Type': 'bind', 'Source': '/run/briven-compute-control',
