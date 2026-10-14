@@ -56,6 +56,16 @@ class FaultGuardTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             guard_container(self.row, self.project, 'engine')
 
+    def test_compose_resolved_immutable_config_id_is_verified(self):
+        from run import IMAGES
+        config_id = IMAGES['engine'][1]
+        self.row['Config']['Image'] = config_id
+        self.row['Image'] = config_id
+        guard_container(self.row, self.project, 'engine')
+        self.row['Image'] = 'sha256:' + '0' * 64
+        with self.assertRaises(AssertionError):
+            guard_container(self.row, self.project, 'engine')
+
 
 if __name__ == '__main__':
     unittest.main()

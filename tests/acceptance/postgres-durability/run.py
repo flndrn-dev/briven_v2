@@ -30,26 +30,29 @@ BINDS = {
 
 
 def guard_container(row, project, service):
-    assert re.fullmatch(r'briven-durability-[0-9]+-[0-9]+', project)
-    assert service in SERVICES
-    assert row['Name'] == '/' + project + '-' + service + '-1'
+    assert re.fullmatch(r'briven-durability-[0-9]+-[0-9]+', project), 'invalid fixture namespace'
+    assert service in SERVICES, 'unexpected fixture service'
+    assert row['Name'] == '/' + project + '-' + service + '-1', 'container name does not match owned fixture'
     labels = row['Config']['Labels']
-    assert labels['com.docker.compose.project'] == project
-    assert labels['com.docker.compose.service'] == service
-    assert labels['briven.acceptance.purpose'] == 'postgres-durability'
-    expected = IMAGES['engine' if service == 'certificates' else service][0]
-    assert row['Config']['Image'] == expected
+    assert labels['com.docker.compose.project'] == project, 'container project does not match owned fixture'
+    assert labels['com.docker.compose.service'] == service, 'container service does not match owned fixture'
+    assert labels['briven.acceptance.purpose'] == 'postgres-durability', 'fixture purpose label missing'
+    expected, config_id = IMAGES['engine' if service == 'certificates' else service]
+    # Compose can resolve a pinned manifest into its immutable image configuration ID.
+    assert row['Config']['Image'] in (expected, config_id), 'container immutable image reference differs'
+    if 'Image' in row:
+        assert row['Image'] == config_id, 'container actual image configuration identity differs'
     host = row['HostConfig']
-    assert not host['PortBindings'] and not host['Privileged']
-    assert host.get('PidMode', '') == '' and not host.get('CapAdd')
+    assert not host['PortBindings'] and not host['Privileged'], 'public ports or privileged container refused'
+    assert host.get('PidMode', '') == '' and not host.get('CapAdd'), 'host PID access or extra capabilities refused'
     for mount in row['Mounts']:
         if mount['Type'] == 'volume':
-            assert mount['Name'].startswith(project + '_')
+            assert mount['Name'].startswith(project + '_'), 'foreign volume refused'
         else:
-            assert mount['Type'] == 'bind' and not mount['RW']
-            assert BINDS.get(mount['Source']) == mount['Destination']
+            assert mount['Type'] == 'bind' and not mount['RW'], 'unexpected writable host mount refused'
+            assert BINDS.get(mount['Source']) == mount['Destination'], 'host mount is outside fixture source whitelist'
     if 'NetworkSettings' in row:
-        assert set(row['NetworkSettings']['Networks']) == {project + '_fixture'}
+        assert set(row['NetworkSettings']['Networks']) == {project + '_fixture'}, 'network outside owned fixture refused'
 
 
 class Acceptance:
@@ -292,6 +295,17 @@ class Acceptance:
         self.summary['cleanupPassed'] = True
         self.report('all owned fixture services stopped; pre-existing containers preserved; secret artifacts excluded', result='pass')
 
+    def diagnose(self):
+        names = self.cmd(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + self.project]).split()
+        for identity in names:
+            row = json.loads(self.cmd(['docker', 'inspect', identity]))[0]
+            self.report('read-only fixture metadata for failure diagnosis', name=row['Name'],
+                        imageReference=row['Config']['Image'], imageId=row['Image'],
+                        running=row['State']['Running'], health=row['State'].get('Health',{}).get('Status'),
+                        ports=row['HostConfig']['PortBindings'], privileged=row['HostConfig']['Privileged'],
+                        pidMode=row['HostConfig'].get('PidMode'), networks=list(row['NetworkSettings']['Networks']),
+                        mounts=[{key:mount.get(key) for key in ['Type','Name','Source','Destination','RW']}for mount in row['Mounts']])
+
 
 def main():
     os.umask(0o077)
@@ -300,7 +314,10 @@ def main():
         acceptance.execute()
     except Exception as error:
         acceptance.summary['passed'] = False
-        acceptance.report('database durability acceptance failed', result='fail', phase=acceptance.phase,errorClass=type(error).__name__)
+        reason=str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-zA-Z0-9 ,;-]{1,160}',str(error)) else 'details suppressed'
+        acceptance.report('database durability acceptance failed', result='fail', phase=acceptance.phase,errorClass=type(error).__name__,reason=reason)
+        try:acceptance.diagnose()
+        except Exception:pass
     finally:
         try:acceptance.cleanup()
         except Exception as error:
