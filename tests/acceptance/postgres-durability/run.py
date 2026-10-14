@@ -165,7 +165,9 @@ class Acceptance:
         raw = self.engine('cat', f'/var/lib/briven/safekeepers/sk{sk_id}/safekeeper.pid').strip()
         assert raw.isdigit() and int(raw) > 1
         assert self.engine('readlink', f'/proc/{raw}/exe').strip() == '/usr/local/bin/safekeeper'
-        self.engine('kill', '-' + action, raw)
+        # The pinned slim image has a POSIX shell; it need not contain procps'
+        # standalone kill executable. Keep the validated signal/PID positional.
+        self.engine('sh', '-c', 'kill "-$1" "$2"', 'briven-fixture-signal', action, raw)
         (self.paused_sks.add if action == 'STOP' else self.paused_sks.discard)(sk_id)
         self.report('owned safekeeper fault transition', result='pass', safekeeper=sk_id, signal=action)
 
