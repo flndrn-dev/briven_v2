@@ -1,9 +1,18 @@
 import copy
 import unittest
-from run import guard_container, ENGINE_IMAGE, startup_signals
+from run import guard_container, ENGINE_IMAGE, startup_signals, redacted_cli_error
 
 
 class FaultGuardTests(unittest.TestCase):
+    def test_controlled_cli_diagnostic_redacts_credentials_and_keys(self):
+        password = 'a' * 64
+        jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.signature123456789'
+        raw = f'command failed: compute startup failed: invalid WAL record\npostgres://user:{password}@host/db\n{jwt}\npassword: short-password\n-----BEGIN PRIVATE KEY-----\nkey-material\n-----END PRIVATE KEY-----'
+        result = redacted_cli_error(raw)
+        self.assertIn('invalid WAL record', result)
+        for value in (password, jwt, 'short-password', 'key-material', 'postgres://'):
+            self.assertNotIn(value, result)
+
     def test_diagnostics_never_return_raw_log_secrets(self):
         secret = 'fixture-password-should-never-appear'
         raw = f'pg_ctl: server is running (PID: 42)\nConnection refused postgres://user:{secret}@host/db'

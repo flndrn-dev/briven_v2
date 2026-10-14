@@ -44,6 +44,21 @@ def startup_signals(raw):
     # Emit fixed categories only; never return arbitrary log text or credentials.
     return [name for name, pattern in STARTUP_SIGNALS.items() if re.search(pattern, raw)]
 
+
+def redacted_cli_error(raw):
+    # Only controlled fixture CLI stderr is eligible, never application logs.
+    raw = re.sub(r'-----BEGIN [^-]+-----.*?-----END [^-]+-----', '[key omitted]', raw, flags=re.S)
+    raw = re.sub(r'[a-zA-Z][a-zA-Z0-9+.-]*://[^\s\"\']+', '[URL omitted]', raw)
+    raw = re.sub(r'[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}', '[JWT omitted]', raw)
+    raw = re.sub(r'[A-Za-z0-9_+/-]{24,}={0,2}', '[long value omitted]', raw)
+    lines = []
+    for line in raw.splitlines():
+        if re.search(r'password|secret|token|authorization|private.key|SCRAM', line, re.I):
+            lines.append('[sensitive line omitted]')
+        else:
+            lines.append(re.sub(r'[^\x20-\x7e]', '', line))
+    return '\n'.join(lines)[-1200:]
+
 BINDS = {
     str(REPO / 'infra/private-back-room/start-private.sh'): '/start-private.sh',
     str(REPO / 'infra/private-back-room/local-env.toml'): '/local-env.toml',
@@ -122,6 +137,8 @@ class Acceptance:
         if check and result.returncode != 0:
             binary = args[3] if args[:2] == ['docker','exec'] else args[0]
             self.report('fixed subprocess failure categories', binary=binary if binary in {'docker','sh','env','briven_local','cat','readlink','curl','head','tail','kill','node'} else 'other', signals=startup_signals(result.stdout + result.stderr))
+            if args[:2] == ['docker','exec'] and binary in {'env','briven_local'}:
+                self.report('redacted controlled fixture CLI failure', diagnostic=redacted_cli_error(result.stderr))
             raise RuntimeError('Fixed acceptance subprocess failed; raw output suppressed')
         return result.stdout if check else result
 
