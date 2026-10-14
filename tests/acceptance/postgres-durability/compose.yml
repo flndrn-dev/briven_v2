@@ -1,0 +1,138 @@
+x-logging: &logging
+  driver: json-file
+  options: {max-size: '10m', max-file: '3'}
+x-labels: &labels
+  briven.acceptance.purpose: postgres-durability
+
+services:
+  certificates:
+    image: ghcr.io/flndrn-dev/briven-engine@sha256:4bf8842f589e7c774d1742c80f9789964152ac7b86295c08ee7f804305c4e9a8
+    labels: *labels
+    logging: *logging
+    user: '0:0'
+    entrypoint: ['/bin/sh', '/create-proxy-certificates.sh']
+    volumes:
+      - ../../../infra/private-back-room/create-proxy-certificates.sh:/create-proxy-certificates.sh:ro
+      - ca-private:/ca-private
+      - ca-public:/ca-public
+      - proxy-tls:/proxy-tls
+    networks: [fixture]
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    restart: 'no'
+  minio:
+    image: bitnamilegacy/minio@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    labels: *labels
+    logging: *logging
+    user: '0:0'
+    entrypoint: ['/opt/bitnami/minio/bin/minio']
+    command: ['server', '/data', '--address', ':9000', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: briven-acceptance
+      MINIO_ROOT_PASSWORD: ${FIXTURE_OBJECT_PASSWORD:?fixture secret required}
+    volumes: [object-data:/data]
+    networks: [fixture]
+    mem_limit: 512m
+    cpus: 0.25
+    pids_limit: 128
+    restart: 'no'
+  minio-init:
+    image: bitnamilegacy/minio-client@sha256:00dcc4e58ada0df45bb7d9ee435af98295f96c27c3c68292ce78ec700a87b511
+    labels: *labels
+    logging: *logging
+    depends_on: [minio]
+    environment:
+      MINIO_ROOT_USER: briven-acceptance
+      MINIO_ROOT_PASSWORD: ${FIXTURE_OBJECT_PASSWORD:?fixture secret required}
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        set -eu
+        mc=/opt/bitnami/minio-client/bin/mc
+        until "$$mc" alias set fixture http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do sleep 1; done
+        "$$mc" mb --ignore-existing fixture/briven
+    networks: [fixture]
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    restart: 'no'
+  catalog:
+    image: postgres@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65
+    labels: *labels
+    logging: *logging
+    command: ['postgres', '-c', 'listen_addresses=']
+    environment:
+      POSTGRES_USER: briven_catalog
+      POSTGRES_DB: briven_control
+      POSTGRES_PASSWORD: ${FIXTURE_CATALOG_PASSWORD:?fixture secret required}
+    volumes:
+      - catalog-data:/var/lib/postgresql/data
+      - catalog-socket:/var/run/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U briven_catalog -d briven_control']
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    networks: [fixture]
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 128
+    restart: 'no'
+  engine:
+    image: ghcr.io/flndrn-dev/briven-engine@sha256:4bf8842f589e7c774d1742c80f9789964152ac7b86295c08ee7f804305c4e9a8
+    labels: *labels
+    logging: *logging
+    depends_on:
+      certificates: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+      catalog: {condition: service_healthy}
+    environment:
+      BRIVEN_ENV: production
+      BRIVEN_REPO_DIR: /var/lib/briven
+      BRIVEN_CONTROL_API_BIND: 0.0.0.0:8787
+      BRIVEN_CONTROL_IDENTITY_SECRET: ${FIXTURE_IDENTITY_SECRET:?fixture secret required}
+      BRIVEN_PROXY_CONTROL_SECRET: ${FIXTURE_PROXY_SECRET:?fixture secret required}
+      NEON_PROXY_TO_CONTROLPLANE_TOKEN: ${FIXTURE_PROXY_SECRET:?fixture secret required}
+      BRIVEN_CUSTOMER_PROXY_HOST: briven-customer-db
+      BRIVEN_CUSTOMER_PROXY_PORT: '5432'
+      BRIVEN_COMPUTE_LIFECYCLE_ENABLED: 'false'
+      BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON: '[]'
+      BRIVEN_CONTROL_DATABASE_URL: postgres://briven_catalog:${FIXTURE_CATALOG_PASSWORD:?fixture secret required}@/briven_control?host=/var/run/postgresql
+      MINIO_ROOT_USER: briven-acceptance
+      MINIO_ROOT_PASSWORD: ${FIXTURE_OBJECT_PASSWORD:?fixture secret required}
+      AWS_ACCESS_KEY_ID: briven-acceptance
+      AWS_SECRET_ACCESS_KEY: ${FIXTURE_OBJECT_PASSWORD:?fixture secret required}
+    volumes:
+      - repo:/var/lib/briven
+      - catalog-socket:/var/run/postgresql:ro
+      - ../../../infra/private-back-room/start-private.sh:/start-private.sh:ro
+      - ../../../infra/private-back-room/local-env.toml:/local-env.toml:ro
+      - proxy-tls:/etc/briven/proxy-tls:ro
+      - ca-public:/etc/briven/proxy-ca:ro
+    command: ['/bin/sh', '/start-private.sh']
+    stop_grace_period: 60s
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:8787/healthz >/dev/null && curl -fsS http://127.0.0.1:7001/v1/status >/dev/null']
+      interval: 3s
+      timeout: 2s
+      retries: 60
+      start_period: 60s
+    networks:
+      fixture:
+        aliases: [briven-customer-db]
+    mem_limit: 4g
+    cpus: 1.5
+    pids_limit: 512
+    restart: 'no'
+
+networks:
+  fixture: {internal: true}
+volumes:
+  ca-private: {}
+  ca-public: {}
+  proxy-tls: {}
+  object-data: {}
+  catalog-data: {}
+  catalog-socket: {}
+  repo: {}
