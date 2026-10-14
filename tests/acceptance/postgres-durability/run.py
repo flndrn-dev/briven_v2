@@ -33,6 +33,9 @@ STARTUP_SIGNALS = {
     'startup-timeout': r'did not start\+pass status checks|Timed out waiting',
     'startup-failed': r'startup failed because|error starting process',
     'postgres-fatal-or-panic': r'FATAL:|PANIC:',
+    'missing-shared-library': r'error while loading shared libraries|cannot open shared object file',
+    'compute-start-failed': r'compute startup failed|compute startup timed out|The endpoint is already running',
+    'missing-command-or-file': r'executable file not found|No such file or directory',
 }
 
 
@@ -115,6 +118,8 @@ class Acceptance:
     def cmd(self, args, timeout=60, check=True):
         result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=self.env)
         if check and result.returncode != 0:
+            binary = args[3] if args[:2] == ['docker','exec'] else args[0]
+            self.report('fixed subprocess failure categories', binary=binary if binary in {'docker','sh','env','briven_local','cat','readlink','curl','head','tail','kill','node'} else 'other', signals=startup_signals(result.stdout + result.stderr))
             raise RuntimeError('Fixed acceptance subprocess failed; raw output suppressed')
         return result.stdout if check else result
 
@@ -214,7 +219,9 @@ done''')
             timeline = next(branch['id'] for branch in state['branches'] if branch['name'] == compute['branch'])
             definition = json.loads(self.engine('cat', f'/var/lib/briven/endpoints/{identity}/endpoint.json'))
             assert definition['endpoint_id'] == identity and definition['tenant_id'] == tenant and definition['timeline_id'] == timeline
-            self.engine('briven_local', 'endpoint', 'start', identity, timeout=150)
+            # Docker exec does not inherit start-private.sh's exported library
+            # path. Match the real control API's inherited runtime environment.
+            self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v16/lib', 'briven_local', 'endpoint', 'start', identity, timeout=150)
         self.report('reviewed native recovery starts only the two exact retained fixture computes', result='pass')
 
     def run_probe(self, action):
