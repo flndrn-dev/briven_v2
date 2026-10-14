@@ -1,9 +1,16 @@
 import copy
 import unittest
-from run import guard_container, ENGINE_IMAGE
+from run import guard_container, ENGINE_IMAGE, startup_signals
 
 
 class FaultGuardTests(unittest.TestCase):
+    def test_diagnostics_never_return_raw_log_secrets(self):
+        secret = 'fixture-password-should-never-appear'
+        raw = f'pg_ctl: server is running (PID: 42)\nConnection refused postgres://user:{secret}@host/db'
+        signals = startup_signals(raw)
+        self.assertEqual(signals, ['postgres-running-reported', 'connection-refused'])
+        self.assertNotIn(secret, str(signals))
+
     def setUp(self):
         self.project = 'briven-durability-123456-1'
         self.row = {

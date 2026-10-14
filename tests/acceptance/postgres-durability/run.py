@@ -22,6 +22,24 @@ IMAGES = {
     'minio-init': ('bitnamilegacy/minio-client@sha256:00dcc4e58ada0df45bb7d9ee435af98295f96c27c3c68292ce78ec700a87b511', 'sha256:3a3daed2aa1f8b4ead16fc89e82d52697111b306bcb614e09121c1cd57d55d9f'),
 }
 SERVICES = {'engine', 'catalog', 'minio', 'minio-init', 'certificates'}
+STARTUP_SIGNALS = {
+    'postgres-running-reported': r'pg_ctl: server is running',
+    'postgres-start-attempted': r'Starting storage controller database',
+    'postgres-ready': r'database system is ready to accept connections',
+    'postgres-recovery-started': r'database system was interrupted|automatic recovery in progress',
+    'postgres-pid-lock-conflict': r'lock file .* already exists|another server might be running',
+    'postgres-invalid-checkpoint': r'invalid checkpoint|could not locate a valid checkpoint',
+    'connection-refused': r'Connection refused|connection refused',
+    'startup-timeout': r'did not start\+pass status checks|Timed out waiting',
+    'startup-failed': r'startup failed because|error starting process',
+    'postgres-fatal-or-panic': r'FATAL:|PANIC:',
+}
+
+
+def startup_signals(raw):
+    # Emit fixed categories only; never return arbitrary log text or credentials.
+    return [name for name, pattern in STARTUP_SIGNALS.items() if re.search(pattern, raw)]
+
 BINDS = {
     str(REPO / 'infra/private-back-room/start-private.sh'): '/start-private.sh',
     str(REPO / 'infra/private-back-room/local-env.toml'): '/local-env.toml',
@@ -74,6 +92,7 @@ class Acceptance:
         self.paused_sks = set()
         self.minio_paused = False
         self.probe = None
+        self.recovery_since = None
         self.env = dict(os.environ)
         self.env['BRIVEN_FIXTURE_ROOT'] = str(self.root)
         self.envfile = self.root / 'fixture-private.env'
@@ -217,6 +236,7 @@ class Acceptance:
         if marker == 'verify-quorum-flush':
             self.flush_quorum(record); self.respond('quorum-flush-verified')
         elif marker == 'crash-with-uncommitted-transaction' and action == 'crash-hold':
+            self.recovery_since = datetime.datetime.now(datetime.timezone.utc).isoformat()
             self.cmd(['docker', 'kill', '--signal', 'KILL', self.row('engine')['Id']])
             self.respond('engine-crashed')
         elif marker == 'ready-to-pause-one-safekeeper' and action == 'one-safekeeper':
@@ -306,6 +326,31 @@ class Acceptance:
                         ports=row['HostConfig']['PortBindings'], privileged=row['HostConfig']['Privileged'],
                         pidMode=row['HostConfig'].get('PidMode'), networks=list(row['NetworkSettings']['Networks']),
                         mounts=[{key:mount.get(key) for key in ['Type','Name','Source','Destination','RW']}for mount in row['Mounts']])
+        engine = self.row('engine')
+        if not engine['State']['Running']:
+            return
+        args = ['docker', 'logs', '--tail', '1000']
+        if self.recovery_since:
+            args += ['--since', self.recovery_since]
+        logs = self.cmd([*args, engine['Id']], check=False)
+        self.report('fixed startup log categories', source='container', signals=startup_signals(logs.stdout + logs.stderr))
+        for source, path in {
+            'controller-postgres': '/var/lib/briven/storage_controller_db/postgres.log',
+            'controller': '/var/lib/briven/storage_controller_1/storage_controller.log',
+            'pageserver': '/var/lib/briven/pageserver_1/pageserver.log',
+            'safekeeper-1': '/var/lib/briven/safekeepers/sk1/safekeeper.log',
+        }.items():
+            result = self.cmd(['docker', 'exec', engine['Id'], 'tail', '-n', '100', path], check=False)
+            self.report('fixed startup log categories', source=source, signals=startup_signals(result.stdout + result.stderr))
+        pid = self.engine('head', '-n', '1', '/var/lib/briven/storage_controller_db/postmaster.pid').strip()
+        if pid.isdigit():
+            result = self.cmd(['docker', 'exec', engine['Id'], 'readlink', f'/proc/{pid}/exe'], check=False)
+            executable = Path(result.stdout.strip()).name
+            self.report('controller postmaster PID executable identity', pid=int(pid),
+                        executable=executable if executable in {'postgres','safekeeper','pageserver','storage_broker','storage_controller','endpoint_storage','neon_local','briven_local','sh'} else 'absent-or-other')
+        for port, path in [(1234,'/ready'), (9898,'/v1/status'), (8787,'/healthz'), (7001,'/v1/status')]:
+            result = self.cmd(['docker','exec',engine['Id'],'curl','-s','--max-time','3','-o','/dev/null','-w','%{http_code}',f'http://127.0.0.1:{port}{path}'],check=False)
+            self.report('fixed startup endpoint status',port=port,status=result.stdout if re.fullmatch(r'[0-9]{3}',result.stdout) else 'unavailable')
 
 
 def main():
