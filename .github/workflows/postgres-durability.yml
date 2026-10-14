@@ -6,6 +6,8 @@ on:
     paths:
       - tests/acceptance/postgres-durability/**
       - .github/workflows/postgres-durability.yml
+      - infra/private-back-room/start-private.sh
+      - infra/private-back-room/test_controller_restart.py
   workflow_dispatch:
 
 permissions:
@@ -22,6 +24,7 @@ jobs:
         run: |
           node --version
           python3 -B -m unittest discover -s tests/acceptance/postgres-durability -p test_guards.py
+          python3 -B infra/private-back-room/test_controller_restart.py
           npm ci --ignore-scripts --no-audit --no-fund --prefix tests/acceptance/postgres-durability
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
         with:

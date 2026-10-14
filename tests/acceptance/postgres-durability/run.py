@@ -1,5 +1,6 @@
 """Real isolated engine acceptance. Fault injection is limited to its CI namespace."""
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -88,6 +89,7 @@ class Acceptance:
         self.root.mkdir(mode=0o700)
         self.evidence = self.root / 'evidence.jsonl'
         self.summary = {'engineSource': ENGINE_SHA, 'engineImage': ENGINE_IMAGE,
+                        'startupScriptSha256': hashlib.sha256((REPO / 'infra/private-back-room/start-private.sh').read_bytes()).hexdigest(),
                         'harnessSource': os.environ['GITHUB_SHA'], 'run': run_id,
                         'attempt': attempt, 'passed': False, 'cleanupPassed': False}
         self.started = False
@@ -140,6 +142,7 @@ class Acceptance:
             if row['State'].get('Health', {}).get('Status') == 'healthy':
                 version = self.engine('briven_local', '--version')
                 assert ENGINE_SHA in version
+                assert self.engine('sha256sum', '/start-private.sh').split()[0] == self.summary['startupScriptSha256']
                 self.report('matching compiled engine is healthy', result='pass', sourceSha=ENGINE_SHA)
                 self.client_config()
                 return
@@ -205,6 +208,8 @@ class Acceptance:
         tenant = state['project']['id']
         assert re.fullmatch(r'[0-9a-f]{32}', tenant)
         assert len(state['computes']) == 2 and len(state['branches']) == 2
+        assert len({value['id'] for value in state['branches']}) == 2
+        assert set(self.engine('ls', '-1', '/var/lib/briven/endpoints').splitlines()) == {value['id'] for value in state['computes']}, 'Unexpected endpoint definition; operator recovery refused'
         processes = self.engine('sh', '-c', '''for p in /proc/[0-9]*; do
 test -r "$p/comm" || continue
 name=$(cat "$p/comm")
@@ -221,7 +226,10 @@ done''')
             assert definition['endpoint_id'] == identity and definition['tenant_id'] == tenant and definition['timeline_id'] == timeline
             # Docker exec does not inherit start-private.sh's exported library
             # path. Match the real control API's inherited runtime environment.
-            self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v16/lib', 'briven_local', 'endpoint', 'start', identity, timeout=150)
+            # The legacy CLI counts its own stale PID file as a conflicting
+            # primary. The reviewed override is safe only after the checks
+            # above prove exactly one definition per timeline and no computes.
+            self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v16/lib', 'briven_local', 'endpoint', 'start', identity, '--allow-multiple', timeout=150)
         self.report('reviewed native recovery starts only the two exact retained fixture computes', result='pass')
 
     def run_probe(self, action):
@@ -250,6 +258,14 @@ done''')
                     self.handle_record(json.loads(line), action)
             assert self.probe.wait(timeout=15) == 0, 'SQL probe failed'
             self.report('complete SQL acceptance phase', result='pass', phase=action)
+            if action in ('seed', 'final'):
+                state = json.loads((self.root / 'probe-private.json').read_text())
+                assert set(state['golden']) == {'main', 'durability-branch'}
+                for branch, golden in state['golden'].items():
+                    assert re.fullmatch(r'[0-9a-f]{64}', golden['hash'])
+                    assert isinstance(golden['rows'], int) and 1025 <= golden['rows'] < 2000
+                    self.report('retained acknowledged fixture checksum', result='pass', phase=action,
+                                branch=branch, rows=golden['rows'], checksum=golden['hash'])
         finally:
             selector.close()
             if self.probe.poll() is None:
@@ -328,6 +344,7 @@ done''')
         finally:
             if self.minio_paused:
                 self.cmd(['docker', 'unpause', self.row('minio')['Id']]); self.minio_paused = False
+        self.recovery_since = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.cmd(['docker', 'kill', '--signal', 'KILL', self.row('engine')['Id']])
         self.cmd(['docker', 'start', self.row('engine')['Id']])
         self.wait_healthy(); self.reviewed_compute_recovery(); self.run_probe('verify'); self.run_probe('final')

@@ -11,6 +11,13 @@ engine image: source `743cab2d44712ad3d81f75563c98bf6c06f5f427`, manifest
 `sha256:4bf8842f589e7c774d1742c80f9789964152ac7b86295c08ee7f804305c4e9a8`.
 Use the existing production startup/configuration, including three synchronous
 safekeepers and pageserver `no_sync=false`. Keep compute lifecycle disabled.
+The reproduced PID-namespace restart defect is fixed in `start-private.sh`:
+before any services start, validate the recorded data/port/socket identities,
+inspect the namespace for a live bound controller postmaster, and clear only
+proven stale PID/socket locks. Preserve durable files and fail closed on unknown
+process or foreign lock identity. Record the actual startup-script SHA256 in
+CI evidence and verify that same script is installed through Dokploy before
+closing acceptance; the immutable engine binary remains743.
 The fixture receives fresh private secrets, its own catalog, object store,
 repository and TLS volumes, one internal network and no published ports.
 Engine cap:4GiB,1.5CPUs,512tasks; catalog256MiB/.25CPU/128tasks;
@@ -35,7 +42,11 @@ Pass all of the following on the matching immutable image:
    full engine is healthy, verify no compute process remains alive, revalidate
    the two saved endpoint/tenant/timeline definitions, and use the existing
    `briven_local endpoint start` operator command. This reconstructs disposable
-   compute caches from durable storage. Do not clear failure records, retry
+   compute caches from durable storage. The legacy CLI counts its own crashed
+   endpoint as a conflicting primary, so the reviewed command uses its existing
+   `--allow-multiple` override only after proving there are exactly two retained
+   definitions, two distinct timelines and no live compute processes. No extra
+   primary is created. Do not clear failure records, retry
    writes, change lifecycle policy or claim automatic crash recovery.
 4. One unavailable safekeeper still permits acknowledged writes with the other
    two. With two safekeepers paused, a new COMMIT must not acknowledge during a
