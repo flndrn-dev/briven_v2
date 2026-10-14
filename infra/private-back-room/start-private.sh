@@ -21,6 +21,52 @@ export LD_LIBRARY_PATH="/usr/local/v16/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # local catalog. Recovery must preload their resource manager. Configure this
 # and durable writes before the first start, not after the API is available.
 controller_data="$BRIVEN_REPO_DIR/storage_controller_db"
+# BEGIN CONTROLLER RESTART GUARD
+prepare_controller_restart() {
+  restart_data=$1
+  restart_proc=$2
+  restart_binary=$3
+  restart_sockets=$4
+  restart_pidfile="$restart_data/postmaster.pid"
+  [ -e "$restart_pidfile" ] || return 0
+  restart_contents=$(cat "$restart_pidfile") || return 1
+  restart_pid=$(printf '%s\n' "$restart_contents" | sed -n '1p')
+  case "$restart_pid" in ''|*[!0-9]*|0|1) return 1 ;; esac
+  restart_realdata=$(cd "$restart_data" && pwd -P) || return 1
+  [ "$(printf '%s\n' "$restart_contents" | sed -n '2p')" = "$restart_realdata" ] || return 1
+  [ "$(printf '%s\n' "$restart_contents" | sed -n '4p')" = 1235 ] || return 1
+  [ "$(printf '%s\n' "$restart_contents" | sed -n '5p')" = "$restart_sockets" ] || return 1
+  [ -r "$restart_proc/1/comm" ] || return 1
+  # This runs in the engine's private PID namespace, before briven_local starts
+  # any services. kill(pid, 0) cannot distinguish a recycled PID after SIGKILL.
+  # Preserve a live postmaster and refuse an identity that cannot be inspected.
+  for restart_process in "$restart_proc"/[0-9]*; do
+    [ -d "$restart_process" ] || continue
+    [ -r "$restart_process/comm" ] || return 1
+    restart_name=$(cat "$restart_process/comm") || return 1
+    [ "$restart_name" = postgres ] || continue
+    restart_exe=$(readlink "$restart_process/exe") || return 1
+    restart_cwd=$(readlink "$restart_process/cwd") || return 1
+    if [ "$restart_cwd" = "$restart_realdata" ]; then
+      [ "$restart_exe" = "$restart_binary" ] || return 1
+      return 0
+    fi
+  done
+  restart_lock="$restart_sockets/.s.PGSQL.1235.lock"
+  restart_socket="$restart_sockets/.s.PGSQL.1235"
+  if [ -e "$restart_lock" ]; then
+    [ "$(sed -n '1p' "$restart_lock")" = "$restart_pid" ] || return 1
+    [ "$(sed -n '2p' "$restart_lock")" = "$restart_realdata" ] || return 1
+  elif [ -e "$restart_socket" ]; then
+    return 1
+  fi
+  [ "$(cat "$restart_pidfile")" = "$restart_contents" ] || return 1
+  # Remove only verified stale runtime locks, never the controller data, WAL,
+  # durable catalog, safekeeper files or customer storage.
+  rm -f -- "$restart_pidfile" "$restart_lock" "$restart_socket"
+  echo 'controller runtime locks cleared after verified postmaster exit'
+}
+# END CONTROLLER RESTART GUARD
 if [ ! -f "$controller_data/PG_VERSION" ]; then
   /usr/local/v16/bin/initdb -D "$controller_data" -U neon --no-instructions
 fi
@@ -29,6 +75,7 @@ touch "$settings"
 awk '!/^[[:space:]]*(fsync|shared_preload_libraries)[[:space:]]*=/' "$settings" > "$settings.new"
 printf "fsync = on\nshared_preload_libraries = 'neon_rmgr'\n" >> "$settings.new"
 mv "$settings.new" "$settings"
+prepare_controller_restart "$controller_data" /proc /usr/local/v16/bin/postgres /tmp
 api_pid=
 proxy_pid=
 shutdown() {
