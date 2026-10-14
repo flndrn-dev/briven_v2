@@ -30,7 +30,13 @@ Pass all of the following on the matching immutable image:
 3. SIGKILL of only the owned fixture engine preserves acknowledged commits and
    removes an explicitly uncommitted transaction. Recovery produces no duplicate
    project, timeline or endpoint. Eight concurrent TLS connections read the same
-   recovered contents and the expected nearest-neighbor result.
+   recovered contents and the expected nearest-neighbor result. Abrupt compute
+   exits deliberately require operator review in the current product. After the
+   full engine is healthy, verify no compute process remains alive, revalidate
+   the two saved endpoint/tenant/timeline definitions, and use the existing
+   `briven_local endpoint start` operator command. This reconstructs disposable
+   compute caches from durable storage. Do not clear failure records, retry
+   writes, change lifecycle policy or claim automatic crash recovery.
 4. One unavailable safekeeper still permits acknowledged writes with the other
    two. With two safekeepers paused, a new COMMIT must not acknowledge during a
    five-second observation. Restoring quorum permits that same COMMIT to finish

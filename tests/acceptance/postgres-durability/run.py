@@ -191,6 +191,30 @@ class Acceptance:
         self.probe.stdin.write((json.dumps({'instruction': instruction}) + '\n').encode())
         self.probe.stdin.flush()
 
+    def reviewed_compute_recovery(self):
+        # Abrupt exits deliberately require operator review; automated recovery
+        # is a separate launch task. Use the existing native operator command.
+        state = json.loads((self.root / 'probe-private.json').read_text())
+        tenant = state['project']['id']
+        assert re.fullmatch(r'[0-9a-f]{32}', tenant)
+        assert len(state['computes']) == 2 and len(state['branches']) == 2
+        processes = self.engine('sh', '-c', '''for p in /proc/[0-9]*; do
+test -r "$p/comm" || continue
+name=$(cat "$p/comm")
+case "$name" in compute_ctl|postgres) printf '%s %s\\n' "$name" "$(readlink "$p/cwd")" ;; esac
+done''')
+        assert not any(line.split(maxsplit=1)[0] == 'compute_ctl' or
+                       ('postgres' in line and '/var/lib/briven/endpoints/' in line)
+                       for line in processes.splitlines() if line.strip()), 'Compute process remains alive; operator recovery refused'
+        for compute in state['computes']:
+            identity = compute['id']
+            assert re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', identity)
+            timeline = next(branch['id'] for branch in state['branches'] if branch['name'] == compute['branch'])
+            definition = json.loads(self.engine('cat', f'/var/lib/briven/endpoints/{identity}/endpoint.json'))
+            assert definition['endpoint_id'] == identity and definition['tenant_id'] == tenant and definition['timeline_id'] == timeline
+            self.engine('briven_local', 'endpoint', 'start', identity, timeout=150)
+        self.report('reviewed native recovery starts only the two exact retained fixture computes', result='pass')
+
     def run_probe(self, action):
         self.probe = subprocess.Popen(['node', str(HERE / 'probe.mjs'), action], env=self.env,
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -282,7 +306,7 @@ class Acceptance:
         self.phase = 'forced-crash'
         self.run_probe('crash-hold')
         self.cmd(['docker', 'start', self.row('engine')['Id']])
-        self.wait_healthy(); self.run_probe('verify')
+        self.wait_healthy(); self.reviewed_compute_recovery(); self.run_probe('verify')
         self.report('abrupt full-engine crash preserves commits and rolls back unfinished work', result='pass')
         self.phase = 'one-safekeeper-unavailable'
         try:self.run_probe('one-safekeeper')
@@ -297,7 +321,7 @@ class Acceptance:
                 self.cmd(['docker', 'unpause', self.row('minio')['Id']]); self.minio_paused = False
         self.cmd(['docker', 'kill', '--signal', 'KILL', self.row('engine')['Id']])
         self.cmd(['docker', 'start', self.row('engine')['Id']])
-        self.wait_healthy(); self.run_probe('verify'); self.run_probe('final')
+        self.wait_healthy(); self.reviewed_compute_recovery(); self.run_probe('verify'); self.run_probe('final')
         self.report('object-store outage and second forced crash retain all acknowledged branch data', result='pass')
         self.summary['passed'] = True
 
