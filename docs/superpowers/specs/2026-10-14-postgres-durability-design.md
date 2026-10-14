@@ -14,7 +14,9 @@ safekeepers and pageserver `no_sync=false`. Keep compute lifecycle disabled.
 The reproduced PID-namespace restart defect is fixed in `start-private.sh`:
 before any services start, validate the recorded data/port/socket identities,
 inspect the namespace for a live bound controller postmaster, and clear only
-proven stale PID/socket locks. Preserve durable files and fail closed on unknown
+proven stale controller PID/socket locks and owned compute socket locks. Keep
+compute PID files as unexpected-exit markers, preserving reviewed recovery.
+Preserve durable files and fail closed on unknown
 process or foreign lock identity. Record the actual startup-script SHA256 in
 CI evidence and verify that same script is installed through Dokploy before
 closing acceptance; the immutable engine binary remains743.

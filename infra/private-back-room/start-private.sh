@@ -22,11 +22,13 @@ export LD_LIBRARY_PATH="/usr/local/v16/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # and durable writes before the first start, not after the API is available.
 controller_data="$BRIVEN_REPO_DIR/storage_controller_db"
 # BEGIN CONTROLLER RESTART GUARD
-prepare_controller_restart() {
+prepare_postmaster_restart() {
   restart_data=$1
   restart_proc=$2
   restart_binary=$3
   restart_sockets=$4
+  restart_scope=${5:-controller}
+  case "$restart_scope" in controller|compute) ;; *) return 1 ;; esac
   restart_pidfile="$restart_data/postmaster.pid"
   [ -e "$restart_pidfile" ] || return 0
   restart_contents=$(cat "$restart_pidfile") || return 1
@@ -34,7 +36,12 @@ prepare_controller_restart() {
   case "$restart_pid" in ''|*[!0-9]*|0|1) return 1 ;; esac
   restart_realdata=$(cd "$restart_data" && pwd -P) || return 1
   [ "$(printf '%s\n' "$restart_contents" | sed -n '2p')" = "$restart_realdata" ] || return 1
-  [ "$(printf '%s\n' "$restart_contents" | sed -n '4p')" = 1235 ] || return 1
+  restart_port=$(printf '%s\n' "$restart_contents" | sed -n '4p')
+  case "$restart_port" in ''|*[!0-9]*|0*) return 1 ;; esac
+  [ "$restart_port" -le 65535 ] || return 1
+  if [ "$restart_scope" = controller ]; then
+    [ "$restart_port" = 1235 ] || return 1
+  fi
   [ "$(printf '%s\n' "$restart_contents" | sed -n '5p')" = "$restart_sockets" ] || return 1
   [ -r "$restart_proc/1/comm" ] || return 1
   # This runs in the engine's private PID namespace, before briven_local starts
@@ -52,8 +59,8 @@ prepare_controller_restart() {
       return 0
     fi
   done
-  restart_lock="$restart_sockets/.s.PGSQL.1235.lock"
-  restart_socket="$restart_sockets/.s.PGSQL.1235"
+  restart_lock="$restart_sockets/.s.PGSQL.$restart_port.lock"
+  restart_socket="$restart_sockets/.s.PGSQL.$restart_port"
   if [ -e "$restart_lock" ]; then
     [ "$(sed -n '1p' "$restart_lock")" = "$restart_pid" ] || return 1
     [ "$(sed -n '2p' "$restart_lock")" = "$restart_realdata" ] || return 1
@@ -63,8 +70,13 @@ prepare_controller_restart() {
   [ "$(cat "$restart_pidfile")" = "$restart_contents" ] || return 1
   # Remove only verified stale runtime locks, never the controller data, WAL,
   # durable catalog, safekeeper files or customer storage.
-  rm -f -- "$restart_pidfile" "$restart_lock" "$restart_socket"
-  echo 'controller runtime locks cleared after verified postmaster exit'
+  # A compute's PID file is also its unexpected-exit marker. Keep it so demand
+  # remains blocked until operator review; endpoint start reconstructs its cache.
+  if [ "$restart_scope" = controller ]; then
+    rm -f -- "$restart_pidfile"
+  fi
+  rm -f -- "$restart_lock" "$restart_socket"
+  echo 'stale postmaster runtime locks cleared after verified exit'
 }
 # END CONTROLLER RESTART GUARD
 if [ ! -f "$controller_data/PG_VERSION" ]; then
@@ -75,7 +87,13 @@ touch "$settings"
 awk '!/^[[:space:]]*(fsync|shared_preload_libraries)[[:space:]]*=/' "$settings" > "$settings.new"
 printf "fsync = on\nshared_preload_libraries = 'neon_rmgr'\n" >> "$settings.new"
 mv "$settings.new" "$settings"
-prepare_controller_restart "$controller_data" /proc /usr/local/v16/bin/postgres /tmp
+prepare_postmaster_restart "$controller_data" /proc /usr/local/v16/bin/postgres /tmp controller
+for controller_endpoint_data in "$BRIVEN_REPO_DIR"/endpoints/*/pgdata; do
+  [ -e "$controller_endpoint_data/postmaster.pid" ] || continue
+  controller_endpoint_version=$(cat "$controller_endpoint_data/PG_VERSION")
+  case "$controller_endpoint_version" in 14|15|16|17) ;; *) exit 1 ;; esac
+  prepare_postmaster_restart "$controller_endpoint_data" /proc "/usr/local/v$controller_endpoint_version/bin/postgres" /tmp compute
+done
 api_pid=
 proxy_pid=
 shutdown() {

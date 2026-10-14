@@ -36,12 +36,12 @@ class ControllerRestartTests(unittest.TestCase):
         if executable is not None:
             (path / 'exe').symlink_to(executable)
 
-    def run_guard(self):
+    def run_guard(self, scope='controller'):
         source = Path(__file__).with_name('start-private.sh').read_text()
         begin = source.index('# BEGIN CONTROLLER RESTART GUARD')
         end = source.index('# END CONTROLLER RESTART GUARD', begin)
-        result = subprocess.run(['sh', '-c', source[begin:end] + '\nprepare_controller_restart "$1" "$2" "$3" "$4"',
-                                 'controller-restart-test', str(self.data), str(self.proc), self.binary, str(self.sockets)],
+        result = subprocess.run(['sh', '-c', source[begin:end] + '\nprepare_postmaster_restart "$1" "$2" "$3" "$4" "$5"',
+                                 'controller-restart-test', str(self.data), str(self.proc), self.binary, str(self.sockets), scope],
                                 capture_output=True, text=True)
         self.assertEqual(self.durable.read_text(), 'acknowledged controller state')
         return result.returncode
@@ -103,6 +103,35 @@ class ControllerRestartTests(unittest.TestCase):
     def test_unavailable_process_namespace_refuses_cleanup(self):
         (self.proc / '1' / 'comm').unlink()
         self.assertNotEqual(self.run_guard(), 0)
+        self.assert_retained()
+
+    def compute_socket(self):
+        self.pidfile.write_text(self.pidfile.read_text().replace('\n1235\n','\n55440\n'))
+        self.lock.write_text(self.lock.read_text().replace('\n1235\n','\n55440\n'))
+        self.socket = self.socket.rename(self.sockets / '.s.PGSQL.55440')
+        self.lock = self.lock.rename(self.sockets / '.s.PGSQL.55440.lock')
+
+    def test_compute_socket_pid_reuse_preserves_the_crash_review_marker(self):
+        self.compute_socket()
+        self.process('safekeeper',self.root,'/usr/local/bin/safekeeper')
+        self.assertEqual(self.run_guard('compute'),0)
+        self.assertTrue(self.pidfile.exists())
+        self.assertFalse(self.lock.exists())
+        self.assertFalse(self.socket.exists())
+
+    def test_running_compute_socket_and_marker_are_preserved(self):
+        self.compute_socket()
+        self.process('postgres',self.data,self.binary)
+        self.assertEqual(self.run_guard('compute'),0)
+        self.assert_retained()
+
+    def test_invalid_compute_port_refuses_cleanup(self):
+        self.pidfile.write_text(self.pidfile.read_text().replace('\n1235\n','\n70000\n'))
+        self.assertNotEqual(self.run_guard('compute'),0)
+        self.assert_retained()
+
+    def test_unknown_scope_refuses_cleanup(self):
+        self.assertNotEqual(self.run_guard('unknown'),0)
         self.assert_retained()
 
 
