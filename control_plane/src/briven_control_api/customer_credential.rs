@@ -263,10 +263,6 @@ pub fn customer_role_statements(credential: &CustomerCredential) -> Option<Vec<S
     Some(statements)
 }
 
-pub fn role_already_exists(sqlstate: &str) -> bool {
-    sqlstate == "42710"
-}
-
 fn is_hex64(password: &str) -> bool {
     password.len() == 64
         && password
@@ -355,7 +351,7 @@ mod tests {
     use super::{
         CUSTOMER_KEY_SECONDS, credential_opens_project, customer_door_accepts, customer_role_name,
         customer_role_statements, customer_uri, issue_customer_credential,
-        publishable_customer_uri, role_already_exists, valid_proxy_host, valid_until_utc,
+        publishable_customer_uri, valid_proxy_host, valid_until_utc,
     };
 
     const PASSWORD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -417,8 +413,6 @@ mod tests {
         assert!(valid_proxy_host("db.internal"));
         let issued = issue_customer_credential(PROJECT, "postgres", "not-hex", 0);
         assert!(issued.is_none());
-        assert!(!role_already_exists("28000"));
-        assert!(role_already_exists("42710"));
     }
 
     #[test]
