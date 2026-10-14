@@ -46,7 +46,8 @@ def startup_signals(raw):
 
 
 def redacted_cli_error(raw):
-    # Only controlled fixture CLI stderr is eligible, never application logs.
+    # Only controlled fixture CLI stderr or selected error lines are eligible;
+    # never archive full application logs.
     raw = re.sub(r'-----BEGIN [^-]+-----.*?-----END [^-]+-----', '[key omitted]', raw, flags=re.S)
     raw = re.sub(r'[a-zA-Z][a-zA-Z0-9+.-]*://[^\s\"\']+', '[URL omitted]', raw)
     raw = re.sub(r'[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}', '[JWT omitted]', raw)
@@ -377,9 +378,9 @@ done''')
                 row = json.loads(self.cmd(['docker', 'inspect', identity]))[0]
                 guard_container(row, self.project, row['Config']['Labels']['com.docker.compose.service'])
             self.cmd([*self.compose, 'stop', '--timeout', '60'], timeout=180)
-            assert not self.cmd(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + self.project]).strip()
+            assert not self.cmd(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + self.project]).strip(), 'Owned fixture service remains running after stop'
         current = self.cmd(['docker', 'ps', '-q']).split()
-        assert all(identity in current for identity in self.baseline)
+        assert all(identity in current for identity in self.baseline), 'Pre-existing container missing after cleanup'
         self.summary['cleanupPassed'] = True
         self.report('all owned fixture services stopped; pre-existing containers preserved; secret artifacts excluded', result='pass')
 
@@ -409,6 +410,14 @@ done''')
         }.items():
             result = self.cmd(['docker', 'exec', engine['Id'], 'tail', '-n', '100', path], check=False)
             self.report('fixed startup log categories', source=source, signals=startup_signals(result.stdout + result.stderr))
+        journal = self.root / 'probe-private.json'
+        if journal.exists():
+            for compute in json.loads(journal.read_text())['computes']:
+                identity = compute['id']
+                assert re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', identity)
+                result = self.cmd(['docker','exec',engine['Id'],'tail','-n','500',f'/var/lib/briven/endpoints/{identity}/compute.log'],check=False)
+                errors = [line for line in result.stdout.splitlines() if re.search(r'\bFATAL\b|\bPANIC\b|\bERROR\b|error:',line)]
+                self.report('redacted owned compute recovery error', diagnostic=redacted_cli_error('\n'.join(errors[-8:])))
         pid = self.engine('head', '-n', '1', '/var/lib/briven/storage_controller_db/postmaster.pid').strip()
         if pid.isdigit():
             result = self.cmd(['docker', 'exec', engine['Id'], 'readlink', f'/proc/{pid}/exe'], check=False)
@@ -435,7 +444,8 @@ def main():
         try:acceptance.cleanup()
         except Exception as error:
             acceptance.summary['cleanupPassed'] = False
-            acceptance.report('fixture cleanup failed', result='fail', errorClass=type(error).__name__)
+            reason=str(error) if isinstance(error,AssertionError) and re.fullmatch(r'[a-zA-Z0-9 ,;-]{1,160}',str(error)) else 'details suppressed'
+            acceptance.report('fixture cleanup failed', result='fail', errorClass=type(error).__name__,reason=reason)
         (acceptance.root / 'summary.json').write_text(json.dumps(acceptance.summary, indent=2) + '\n')
     if not (acceptance.summary['passed'] and acceptance.summary['cleanupPassed']):
         raise SystemExit(1)
