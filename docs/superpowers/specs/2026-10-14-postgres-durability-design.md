@@ -2,7 +2,9 @@
 
 The owner selected this single launch gap for completion before the next task.
 Continue the accepted native workflow and isolated-engine design. No production
-restart, new public route, customer drill or global policy activation is included.
+fault injection, new public route, customer drill or global policy activation is
+included. Reproduced startup fixes are installed through a normal software
+deployment on the existing Dokploy engine service, with data bindings preserved.
 
 ## Acceptance boundary
 
