@@ -1,11 +1,11 @@
 # Account AI assistant acceptance — 17 October 2026
 
-Status: **accepted — Account AI assistant100% of the selected checklist.**
+Status: **accepted — Account AI assistant 100% of the selected checklist.**
 
 The owner selected final provider, streaming and permission acceptance and explicitly
 chose streamed progress followed by a validated final result. Local/Linux regression,
 real-provider flows, native confirmation/cancellation, preservation and cleanup passed.
-The governing documents are the owner-approved6October complete-AI design and website
+The governing documents are the owner-approved 6 October complete-AI design and website
 `docs/superpowers/specs/2026-10-17-account-ai-acceptance-design.md` and matching plan.
 
 ## Scope and implementation
@@ -26,14 +26,14 @@ has a175second deadline,128KiB frame and1MiB response bounds, split UTF8/CRLF su
 strict progress/result checks, EOF/error/duplicate rejection and reader cleanup.
 Existing component fences guard progress and final state after close, unmount,
 organization changes, New chat or Cancel. Known-length oversized requests have an
-explicit413response; invalid inputs stop before provider dispatch.
+explicit 413 response; invalid inputs stop before provider dispatch.
 
 No provider/model/configuration, dependency, action authority, project or service
 was added. Existing pricing/payment/SMS and operating-activation settings stay intact.
 
 ## Reproduction, regression and Linux gate
 
-The original baseline passed47tests/278assertions against disposable PostgreSQL17.11.
+The original baseline passed47 tests / 278 assertions against disposable PostgreSQL 17.11.
 Four new composed-route tests first failed404 because streaming was absent. Six new
 actual-component tests first failed because progress/stream cancellation was absent.
 These failures preceded the implementation. Private receipts retain the attempts.
@@ -41,7 +41,7 @@ An intermediate fixture expected413without a Content-Length; that body was safel
 rejected400. The fixture now exercises the declared-length413boundary explicitly.
 
 Final local and [Linux38977942981](https://github.com/flndrn-dev/briven-website/actions/runs/38977942981):
-**90tests,480assertions,0failures,0skips** across13files. Existing Guided Agent,
+**90 tests, 480 assertions, 0 failures, 0 skips** across 13 files. Existing Guided Agent,
 action/confirmation, lifecycle and onboarding regressions are included.
 
 Coverage includes progress before blocked provider completion, committed final
@@ -51,8 +51,8 @@ split UTF8/CRLF/heartbeats, bounded/malformed/partial/duplicate results, pending
 proposal delivery and confirmation binding. The real React component was rendered
 under JSDOM; no replacement component supplied its behavior.
 
-Linux was **SUCCESS** at exactf068d91 with a clean tracked worktree, Bun1.3.14,
-Node22 and PostgreSQL17.11. Frozen installation, API/web types, API build, production
+Linux was **SUCCESS** at exactf068d91 with a clean tracked worktree, Bun 1.3.14,
+Node 22 and PostgreSQL 17.11. Frozen installation, API/web types, API build, production
 web build, scoped lint, disposable schema cleanup and owned PostgreSQL container
 removal passed. Local PostgreSQL was stopped after cleanup; local builds also passed.
 Artifact12079024831 was downloaded and independently matched GitHub's digest:
@@ -65,7 +65,7 @@ CI and an independent reviewer are not claimed by this focused gate.
 
 ## Publication and native rollout
 
-Bothlinux/amd64images published successfully from exactf068d91 with immutable tag
+Both linux/amd64images published successfully from exactf068d91 with immutable tag
 `serverless-20261017-f068d91`. Registry provenance independently matches source and run.
 
 | Image | Publication | Manifest digest | Actual image ID |
@@ -87,9 +87,9 @@ remain exact across both phases. The supervisor shares the API image and was
 necessarily replaced; its product source and recoveryobservepolicy remain unchanged.
 No saved build-identity variable was introduced; image build metadata owns identity.
 
-All16 selected deployed product-file hashes match the accepted source, covering
+All 16 selected deployed product-file hashes match the accepted source, covering
 the actual component/client, conversation/routes/tools/actions/lifecycle/provider,
-supervisor and preserved Database AI hook. Actual Bun1.3.14, Nodev22.23.3,
+supervisor and preserved Database AI hook. Actual Bun 1.3.14, Nodev22.23.3,
 Next build ID`Kiy5O8mLzrhNcLSBXK9Yp`, API boot16Oct23:21:48.360UTC verified.
 Runtimec12, realtimeb46 and engine743 remain unchanged.
 
@@ -128,8 +128,8 @@ Only the retained synthetic identities/orgA/project
   were independently0after cancellation. Real TCP abort and component races also
   passed in the isolated gate.
 
-Exactly4provider turns were reserved before dispatch, each bounded by the existing
-5lookup ceiling: **20upstreamcalls worst-case**, not an instrumented billing count.
+Exactly 4 provider turns were reserved before dispatch, each bounded by the existing
+5 lookup ceiling: **20 upstream calls worst-case**, not an instrumented billing count.
 Durable reservations exist outside the replaceable API container too. Minimum
 quiet interval between completed turns was71.196s; reserved worst-case peak5per
 rolling minute, below10. No provider-backed turn was retried automatically. One
@@ -139,7 +139,7 @@ the remaining8seconds were honored before its single actual submission.
 
 ## Cleanup and exact preservation
 
-- All6owned new threads are discarded/deleted with no conversational messages,
+- All 6 owned new threads are discarded/deleted with no conversational messages,
   title/intake content, active claim or pending/running proposal. The separate
   succeeded rename action and its one action audit remain. All pre-existing
   synthetic conversation/action/history/onboarding rows were preserved exactly.
@@ -148,21 +148,21 @@ the remaining8seconds were honored before its single actual submission.
   handoff clipboard cleared, temporary tab closed and helper stopped. Responsive
   mode was closed; owner sessions were untouched.
 - Final visible schema/index hash
-  `13dd5b5b490d10ef946f39f04e7abe3f70bb1db55d10d177da8e8ae0c54a7b7c` and all212
+  `13dd5b5b490d10ef946f39f04e7abe3f70bb1db55d10d177da8e8ae0c54a7b7c` and all 212
   `gap_acceptance_data` rows, hash
   `bc3310b7f3de375a5a5e3f6b792fc9d1a474cf6c0680d8ce7b91fd7fbc7f296b`, match baseline.
-  All5project/engine bindings and deployment/file/environment/schedule metadata
+  All 5 project/engine bindings and deployment/file/environment/schedule metadata
   remain intact. Original display name restored; only its attributable timestamp
   changed. The prior Guided Agent project remains preserved. No new project,
   branch, optional service or generated SQL/code execution occurred.
 - Both protected Mittera projects remain owner-soft-deleted at exact organization/
   engine bindings and deletion/update times12Oct15:44:14.952UTC and16Oct18:56:12.956UTC.
   Historical fixture deletion flags were never applied to customer state.
-- Platform counts remain4users/3organizations/5projects/0files. All34containers
-  run; the31outside API/web/shared-supervisor match original IDs/images/settings/
+- Platform counts remain4users/3organizations/5projects/0files. All 34 containers
+  run; the 31 outside API/web/shared-supervisor match original IDs/images/settings/
   mounts/ports. Replaced services preserve stable environment, mounts and ports.
   Compose definition and all saved variables except the two selectors match baseline.
-  Subsequent post-release checks match all34container identities and every variable.
+  Subsequent post-release checks match all 34 container identities and every variable.
 - Pre-existing boot history retained; one accepted API boot added. Recoveryobserve
   is healthy onf068; lifecycle and savedcopies stay disabled. Public apex/www/signin/
   APIready/docs/realtimeready/info returned200; public realtime metrics/stats404.
@@ -178,6 +178,13 @@ Only Account AI assistant moves90%→100%. The same20core-area engineering estim
 is **89.25%**, previously88.75%, optionalGCS excluded. This is a delivery estimate;
 other launch areas retain their separate scores.
 
-Website main/origin/main are synchronized at accepted product sourcef068d91.
-The final completion-plan commit and native documentation synchronization follow
-with the accepted immutable images retained.
+Website local main/origin/main are clean and synchronized at final documentation
+commit `2d27bdb2f332de5c9c81fb0bcc8fb7b9df19e366`. The accepted task branch remains
+at f068d91. Native documentation deployment reached **Done5s** at2d27bdb; independent
+proof verifies that checkout, all34post-release container identities/settings and
+every saved deployment variable unchanged. The accepted API/web images remain f068.
+The existing nonsecret Dokploy target record now contains these verified source,
+image/digest and acceptance receipts; all other repository mappings and prior
+backend/Agent/Database AI/realtime fields are preserved. Root report commits are
+scoped to this file; owner tracker, mixed handoff and unrelated root edits remain
+preserved locally.
