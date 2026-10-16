@@ -141,6 +141,12 @@ is now**88.75%**, previously88.5%, optionalGCS excluded. This is a delivery esti
 not measured coverage or whole-application production certification. Account AI,
 public SDK distribution and other launch gaps retain their separate status.
 
-Website main/origin/main are synchronized at accepted sourcea7d5a83. Final
-completion-plan synchronization and its native documentation deployment follow
-without changing the accepted product image.
+Website local main/origin/main are clean and synchronized at final documentation
+commit `9f0f050da3a3350ba12d55bfd882794659f7de93`; the accepted task branch remains
+at a7d5a83. Native Git deployment reached **Done6s** at9f0f050. Independent final
+proof verifies that checkout and all34post-acceptance container identities/settings
+unchanged. Public readiness passed again. The existing nonsecret Dokploy target
+record now contains the verified checkout, accepted web image/digest and acceptance
+run, preserving every other mapping and existing backend/Agent/realtime fields.
+Root report is committed/pushed separately; owner tracker, mixed handoff and all
+unrelated local changes are preserved. The accepted product image remains a7d5a83.
