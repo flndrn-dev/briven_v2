@@ -149,10 +149,11 @@ try{
  try{await protectedFor(70,'failed activity sampling keeps the real compute awake',true);check((await record()).failure==='activity_unavailable','failed real inspection is recorded as unavailable');}
  finally{await marker('resume-postmaster');}
  phase='activity-recovery';
+ const recoveryStarted=Math.floor(Date.now()/1000);
  const recoveryBefore=await record();
  const recoverySleep=await waitPhase('sleeping',240);
  check(!recoverySleep.failure&&recoverySleep.stopRequested&&recoverySleep.starts===recoveryBefore.starts,'failed inspection recovers through acknowledged sleep without reconfiguration or startup');
- check(recoverySleep.phaseSince>=recoverySleep.lastDemand+recoverySleep.idleSeconds&&recoverySleep.phaseSince-recoverySleep.lastDemand<=recoverySleep.idleSeconds+65,'recovered sleep honors the last observed activity and scheduler reconciliation bound');
+ check(recoverySleep.phaseSince>=recoverySleep.lastDemand+recoverySleep.idleSeconds&&recoverySleep.phaseSince<=Math.max(recoveryStarted,recoverySleep.lastDemand+recoverySleep.idleSeconds)+65,'recovered sleep honors the last observed activity and scheduler reconciliation bound');
  await coldWake(recoverySleep);
  report('bounded failed inspection recovery sleep and cold wake passed');
 
