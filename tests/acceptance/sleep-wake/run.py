@@ -88,6 +88,11 @@ class Acceptance(fixture.Acceptance):
         stat = self.engine('cat', f'/proc/{pid}/stat').rsplit(') ', 1)[1].split()
         return argv, int(stat[1])
 
+    def process_exited(self, pid):
+        assert str(pid).isdigit() and int(pid) > 0
+        result = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'sh', '-c', 'if test ! -d "/proc/$1"; then printf "absent\\n"; elif value=$(cat "/proc/$1/stat" 2>/dev/null); then printf "%s\\n" "$value"; elif test ! -d "/proc/$1"; then printf "absent\\n"; else exit 1; fi', 'briven-owned-process-exit', str(pid)], check=False)
+        return api_exit_observed(result)
+
     def signal(self, pid, signal):
         assert signal in SIGNALS and str(pid).isdigit() and int(pid) > 0
         self.engine('sh', '-c', 'kill "-$1" "$2"', 'briven-owned-signal', signal, str(pid))
@@ -97,17 +102,27 @@ class Acceptance(fixture.Acceptance):
         result = {}
         for name, suffix in [('postgres', 'pgdata/postmaster.pid'), ('controller', 'compute_ctl.pid')]:
             path = f'/var/lib/briven/endpoints/{endpoint}/{suffix}'
-            raw = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'head', '-n', '1', path], check=False)
-            if raw.returncode or not raw.stdout.strip().isdigit():
+            raw = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'sh', '-c', 'if test ! -e "$1"; then exit 44; elif value=$(head -n 1 "$1"); then printf "%s\\n" "$value"; elif test ! -e "$1"; then exit 44; else exit 45; fi', 'briven-owned-pid-file', path], check=False)
+            if raw.returncode == 44:
                 result[name] = None
                 continue
+            assert raw.returncode == 0, 'Owned PID file inspection failed'
+            assert raw.stdout.strip().isdigit() and int(raw.stdout.strip()) > 0, 'Malformed owned PID file'
             pid = int(raw.stdout.strip())
             exists = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'test', '-r', f'/proc/{pid}/cmdline'], check=False)
             if exists.returncode:
+                assert self.process_exited(pid), 'Unreadable identity did not prove process exit'
                 result[name] = None
                 continue
-            argv, _ = self.identity(pid)
-            status = self.engine('cat', f'/proc/{pid}/stat').rsplit(') ', 1)[1].split()[0]
+            try:
+                argv, _ = self.identity(pid)
+                status = self.engine('cat', f'/proc/{pid}/stat').rsplit(') ', 1)[1].split()[0]
+            except (RuntimeError, IndexError):
+                if not self.process_exited(pid):
+                    raise
+                result[name] = None
+                self.report('bound process exit confirmed after inspection race', result='pass', kind=name)
+                continue
             if status in ('Z', 'X'):
                 result[name] = None
                 continue
@@ -119,14 +134,28 @@ class Acceptance(fixture.Acceptance):
         return result
 
     def census(self):
-        raw = self.engine('sh', '-c', 'n=0; for p in /proc/[0-9]*; do n=$((n+1)); test "$n" -le 16384 || exit 1; e=$(readlink "$p/exe" 2>/dev/null) || continue; case "$e" in /usr/local/bin/compute_ctl|/usr/local/v17/bin/postgres) printf "%s\\n" "${p##*/}";; esac; done')
+        raw = self.engine('sh', '-c', '''n=0
+for p in /proc/[0-9]*; do
+ n=$((n+1)); test "$n" -le 16384 || exit 1
+ if e=$(readlink "$p/exe" 2>/dev/null); then :
+ elif test ! -d "$p"; then continue
+ else
+  value=$(cat "$p/stat" 2>/dev/null) || { test ! -d "$p" && continue; exit 1; }
+  case "${value##*) }" in 'Z '*|'X '*) continue;; *) exit 1;; esac
+ fi
+ case "$e" in /usr/local/bin/compute_ctl|/usr/local/v17/bin/postgres) printf "%s\\n" "${p##*/}";; esac
+done''')
         matches = []
         for pid in raw.splitlines():
             assert pid.isdigit() and int(pid) > 1
             result = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'cat', f'/proc/{pid}/cmdline'], check=False)
-            if result.returncode: continue
+            if result.returncode:
+                assert self.process_exited(pid), 'Failed census read did not prove process exit'
+                continue
             argv = [v for v in result.stdout.split('\0') if v]
-            if not argv: continue
+            if not argv:
+                assert self.process_exited(pid), 'Empty census identity did not prove process exit'
+                continue
             kind = Path(argv[0]).name
             directory = '/var/lib/briven/endpoints/' + self.endpoint() + '/pgdata'
             bound = (kind == 'postgres' and ['-D', directory] in [argv[n:n+2] for n in range(len(argv)-1)]) or (kind == 'compute_ctl' and ['--compute-id', self.endpoint()] in [argv[n:n+2] for n in range(len(argv)-1)] and ['--pgdata', directory] in [argv[n:n+2] for n in range(len(argv)-1)])
@@ -159,8 +188,7 @@ class Acceptance(fixture.Acceptance):
         # old health response and stale PID file satisfy replacement readiness.
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            old = self.cmd(['docker', 'exec', row['Id'], 'sh', '-c', 'if test ! -d "/proc/$1"; then printf "absent\\n"; elif value=$(cat "/proc/$1/stat" 2>/dev/null); then printf "%s\\n" "$value"; elif test ! -d "/proc/$1"; then printf "absent\\n"; else exit 1; fi', 'briven-owned-api-exit', str(pid)], check=False)
-            if api_exit_observed(old):
+            if self.process_exited(pid):
                 break
             time.sleep(0.1)
         else:
@@ -245,6 +273,7 @@ class Acceptance(fixture.Acceptance):
                 if all(value is None for value in self.processes().values()): break
                 time.sleep(0.25)
             assert all(value is None for value in self.processes().values())
+            assert not self.census(), 'Prepared-work setup refuses an orphan or duplicate process'
             self.engine('sh', '-c', 'printf "\\nmax_prepared_transactions = 4\\n" >> "$1"', 'briven-owned-config', f'/var/lib/briven/endpoints/{endpoint}/postgresql.conf')
             self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v16/lib', 'briven_local', 'endpoint', 'start', endpoint, timeout=150)
             self.restart_api()

@@ -40,6 +40,45 @@ class LifecycleFaultGuards(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 module.guard_connection_refused(SimpleNamespace(returncode=code, stderr=detail))
 
+    def test_process_disappearing_between_reads_requires_positive_exit(self):
+        for phase, exited in [(phase, exited) for phase in ('identity', 'second-stat') for exited in (True, False, None)]:
+            proof = module.Acceptance.__new__(module.Acceptance)
+            proof.endpoint = Mock(return_value='ep-' + 'a' * 32)
+            proof.row = Mock(return_value={'Id': 'owned-ci-container'})
+            proof.cmd = Mock(return_value=SimpleNamespace(returncode=0, stdout='42'))
+            proof.identity = Mock(side_effect=RuntimeError('read raced exit')) if phase == 'identity' else Mock(return_value=(['postgres'], 1))
+            proof.engine = Mock(side_effect=RuntimeError('second stat raced exit'))
+            proof.process_exited = Mock(side_effect=AssertionError('failed exit probe')) if exited is None else Mock(return_value=exited)
+            proof.report = Mock()
+            if exited:
+                self.assertEqual(proof.processes(), {'postgres': None, 'controller': None})
+            elif exited is False:
+                with self.assertRaises(RuntimeError): proof.processes()
+            else:
+                with self.assertRaises(AssertionError): proof.processes()
+
+    def test_live_wrong_identity_is_not_normalized_as_exit(self):
+        proof = module.Acceptance.__new__(module.Acceptance)
+        proof.endpoint = Mock(return_value='ep-' + 'a' * 32)
+        proof.row = Mock(return_value={'Id': 'owned-ci-container'})
+        proof.cmd = Mock(return_value=SimpleNamespace(returncode=0, stdout='42'))
+        proof.identity = Mock(return_value=(['unrelated-process'], 1))
+        proof.engine = Mock(return_value='42 (unrelated) S 1')
+        proof.process_exited = Mock(return_value=True)
+        with self.assertRaises(AssertionError): proof.processes()
+        proof.process_exited.assert_not_called()
+
+    def test_pid_file_and_readability_errors_are_not_absence(self):
+        proof = module.Acceptance.__new__(module.Acceptance)
+        proof.endpoint = Mock(return_value='ep-' + 'a' * 32)
+        proof.row = Mock(return_value={'Id': 'owned-ci-container'})
+        proof.process_exited = Mock(return_value=False)
+        for code, contents in [(125, ''), (45, ''), (0, 'broken'), (0, '')]:
+            proof.cmd = Mock(return_value=SimpleNamespace(returncode=code, stdout=contents))
+            with self.assertRaises(AssertionError): proof.processes()
+        proof.cmd = Mock(side_effect=[SimpleNamespace(returncode=0, stdout='42'), SimpleNamespace(returncode=125, stdout='')])
+        with self.assertRaises(AssertionError): proof.processes()
+
     def test_private_files_are_removed_even_when_inventory_cleanup_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
             proof = module.Acceptance.__new__(module.Acceptance)
