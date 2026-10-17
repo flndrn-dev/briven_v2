@@ -247,6 +247,10 @@ class Acceptance(fixture.Acceptance):
             assert not self.census() and self.launches() == self.sleep_launches, 'Capacity refusal allocated a process'
             self.restart_api()
             self.capacity_server.stdin.close(); assert self.capacity_server.wait(timeout=10) == 0
+            responses = [json.loads(line) for line in self.capacity_server.stdout.read().decode().splitlines()]
+            admitted = [r for r in responses if r.get('action') == 'admit']
+            assert len(admitted) == 1 and admitted[0] == {'event': 'owned-resource-response', 'action': 'admit', 'project': self.state()['project']['id'], 'negativeDelivered': True}, 'Exact admission refusal was not delivered'
+            self.report('exact valid resource admission request received and negative response delivered', result='pass')
             self.capacity_server = None
         elif marker == 'tamper-binding':
             self.restart_api(scheduler=False)
@@ -262,19 +266,6 @@ class Acceptance(fixture.Acceptance):
             self.cmd(['docker', 'exec', self.row('catalog')['Id'], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'briven_catalog', '-d', 'briven_control', '-c', sql])
             self.binding_backup = None
             self.restart_api()
-        elif marker == 'catalog-cas':
-            sql = """BEGIN;
-DO $check$ DECLARE original bigint; changed bigint;
-BEGIN
- SELECT generation INTO original FROM briven_compute_lifecycle.endpoints WHERE endpoint_id='%s' FOR UPDATE;
- UPDATE briven_compute_lifecycle.endpoints SET generation=original+1,record=jsonb_set(record::jsonb,'{generation}',to_jsonb(original+1))::text WHERE endpoint_id='%s' AND generation=original;
- GET DIAGNOSTICS changed=ROW_COUNT; IF changed<>1 THEN RAISE EXCEPTION 'first claim failed'; END IF;
- UPDATE briven_compute_lifecycle.endpoints SET generation=original+1 WHERE endpoint_id='%s' AND generation=original;
- GET DIAGNOSTICS changed=ROW_COUNT; IF changed<>0 THEN RAISE EXCEPTION 'stale claim succeeded'; END IF;
-END $check$;
-ROLLBACK;""" % (endpoint, endpoint, endpoint)
-            self.cmd(['docker', 'exec', self.row('catalog')['Id'], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'briven_catalog', '-d', 'briven_control', '-c', sql])
-            self.report('actual isolated catalog permits one generation claimant and refuses its stale replay', result='pass')
         elif marker == 'arm-orphan-controller':
             self.orphan_controller = self.processes()['controller']
             assert self.orphan_controller

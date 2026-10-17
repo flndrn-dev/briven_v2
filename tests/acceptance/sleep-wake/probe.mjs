@@ -133,7 +133,6 @@ try{
  const staleBefore=await record();
  check((await api(lifecycle(),'POST',{enabled:true,idleSeconds:60,generation:duplicateBefore.generation})).status===422,'caller supplied stale generation cannot mutate lifecycle state');
  check(JSON.stringify(await record())===JSON.stringify(staleBefore),'rejected stale generation leaves durable state exact');
- await marker('catalog-cas');
  phase='actual-binding-mismatch';await marker('tamper-binding');
  try{
   check((await api(lifecycle())).status===503,'real stored timeline mismatch refuses lifecycle status');

@@ -139,6 +139,13 @@ RUN  --mount=type=secret,uid=1000,id=SUBZERO_ACCESS_TOKEN \
       --locked --release \
     && mold -run make -j $(nproc) -s neon-pg-ext
 
+# Explicit CI target: never copied into the runtime image. A unique run value
+# ensures the real private PostgreSQL test executes on every acceptance run.
+FROM build AS lifecycle-acceptance
+ARG GIT_VERSION
+ARG BRIVEN_ACCEPTANCE_RUN
+RUN /bin/bash tests/acceptance/sleep-wake/rust-postgres-acceptance.sh
+
 # Assemble the final image
 FROM $BASE_IMAGE_SHA
 WORKDIR /data

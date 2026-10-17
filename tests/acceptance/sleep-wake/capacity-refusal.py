@@ -48,6 +48,7 @@ def serve():
                             'cpuPeriodUsec': 100000, 'maxPids': 128,
                             'parentVerified': True, 'processBound': False}
                 connection.sendall((json.dumps(response) + '\n').encode())
+                print(json.dumps({'event': 'owned-resource-response', 'action': request['action'], 'project': request['project'], 'negativeDelivered': request['action'] == 'admit'}), flush=True)
             except (ValueError, AssertionError, OSError):
                 pass
 
