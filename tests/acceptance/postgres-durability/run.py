@@ -94,9 +94,9 @@ def guard_container(row, project, service):
 
 
 class Acceptance:
-    def __init__(self):
+    def __init__(self, fixture_attempt=None):
         assert os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux'
-        run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
+        run_id, attempt = os.environ['GITHUB_RUN_ID'], fixture_attempt or os.environ['GITHUB_RUN_ATTEMPT']
         assert run_id.isdigit() and attempt.isdigit()
         self.project = f'briven-durability-{run_id}-{attempt}'
         temp = Path(os.environ['RUNNER_TEMP']).resolve()

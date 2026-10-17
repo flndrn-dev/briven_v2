@@ -34,9 +34,19 @@ def guard_api(argv, parent):
 
 class Acceptance(fixture.Acceptance):
     def __init__(self):
+        global SOURCE, IMAGE, CONFIG
+        if os.environ.get('BRIVEN_SLEEP_WAKE_CANDIDATE') == 'true':
+            assert os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux'
+            SOURCE = os.environ['GITHUB_SHA']
+            assert re.fullmatch('[0-9a-f]{40}', SOURCE)
+            IMAGE = 'local/briven-engine-acceptance:' + SOURCE
+            image = json.loads(subprocess.check_output(['docker', 'image', 'inspect', IMAGE], text=True))[0]
+            assert image['Config']['Labels']['org.opencontainers.image.revision'] == SOURCE
+            CONFIG = image['Id']
+            assert re.fullmatch('sha256:[0-9a-f]{64}', CONFIG)
         fixture.ENGINE_SHA, fixture.ENGINE_IMAGE = SOURCE, IMAGE
         fixture.IMAGES['engine'] = (IMAGE, CONFIG)
-        super().__init__()
+        super().__init__(fixture_attempt=os.environ['GITHUB_RUN_ATTEMPT'] + '1' if os.environ.get('BRIVEN_SLEEP_WAKE_CANDIDATE') == 'true' else None)
         self.summary.update(suite='database-sleep-wake', engineConfigId=CONFIG)
         self.shell_paused = False
         self.paused_postmaster = None
@@ -301,7 +311,8 @@ class Acceptance(fixture.Acceptance):
         available = int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'))) * 1024
         assert available > 5.5 * 1024**3 and shutil.disk_usage(self.root).free > 8 * 1024**3
         for image, expected in fixture.IMAGES.values():
-            self.cmd(['docker', 'pull', image], timeout=300)
+            if not image.startswith('local/briven-engine-acceptance:'):
+                self.cmd(['docker', 'pull', image], timeout=300)
             assert json.loads(self.cmd(['docker', 'image', 'inspect', image]))[0]['Id'] == expected
         self.started = True
         self.phase = 'start-immutable-fixture'

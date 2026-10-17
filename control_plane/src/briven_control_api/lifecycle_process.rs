@@ -115,7 +115,8 @@ impl Processes {
     }
 
     /// PID files alone cannot prove exit: a missing file may hide an orphan.
-    /// This bounded final census runs only for explicit destructive removal.
+    /// Use this bounded census before treating a missing PID file as a completed
+    /// shutdown, starting a replacement, or performing destructive removal.
     pub fn absence_confirmed(endpoint: &Endpoint) -> bool {
         let processes = Self::inspect(endpoint);
         if processes.postgres != Presence::Absent || processes.controller != Presence::Absent {
@@ -181,7 +182,7 @@ impl Processes {
                 if matches!(
                     endpoint.status(),
                     EndpointStatus::Stopped | EndpointStatus::Crashed
-                ) =>
+                ) && Self::absence_confirmed(endpoint) =>
             {
                 Observation::Absent
             }

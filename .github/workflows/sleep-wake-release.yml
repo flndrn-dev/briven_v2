@@ -1,0 +1,95 @@
+name: Database sleep wake candidate acceptance and immutable release
+on:
+  push:
+    branches: ['sleep-wake-release-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: true
+      - name: Verify fixed guards and install locked SQL clients
+        run: |
+          python3 -B -m unittest discover -s tests/acceptance/postgres-durability -p test_guards.py
+          python3 -B -m unittest discover -s tests/acceptance/sleep-wake -p test_guards.py
+          python3 -B infra/private-back-room/test_controller_restart.py
+          python3 -B infra/private-back-room/compute-resource-host.test.py
+          npm ci --ignore-scripts --no-audit --no-fund --prefix tests/acceptance/postgres-durability
+          npm ci --ignore-scripts --no-audit --no-fund --prefix tests/acceptance/saved-copies
+      - name: Free unused runner SDK disk
+        run: sudo rm -rf /usr/local/lib/android
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build exact candidate without publishing
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: local/briven-engine-acceptance:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/flndrn-dev/briven_v2
+          build-args: |
+            REPOSITORY=ghcr.io/neondatabase
+            IMAGE=build-tools
+            TAG=pinned
+            GIT_VERSION=${{ github.sha }}
+            DEBIAN_VERSION=bookworm
+          cache-from: type=gha,scope=operations-engine
+          cache-to: type=gha,scope=operations-engine,mode=max
+      - name: Preserve saved-copy removal and interrupted cleanup acceptance
+        run: python3 -B tests/acceptance/saved-copies/run.py
+      - name: Remove only the stopped saved-copy fixture host alias
+        run: |
+          python3 - <<'PY'
+          import ipaddress, json, os, pathlib, subprocess, urllib.parse
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / ('briven-durability-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
+          proof = json.loads((root / 'summary.json').read_text())
+          assert proof['passed'] and proof['cleanupPassed']
+          address = urllib.parse.urlparse(json.loads((root / 'client-private.json').read_text())['origin']).hostname
+          assert ipaddress.ip_address(address).is_private
+          subprocess.run(['sudo', 'python3', '-c', "import pathlib,sys; p=pathlib.Path('/etc/hosts'); line=sys.argv[1]+' briven-customer-db'; lines=p.read_text().splitlines(); assert lines.count(line)==1; p.write_text(chr(10).join(v for v in lines if v!=line)+chr(10))", address], check=True)
+          for path in root.glob('*private*'):
+              path.unlink()
+          PY
+      - name: Run actual lifecycle and restart acceptance
+        env:
+          BRIVEN_SLEEP_WAKE_CANDIDATE: 'true'
+        run: python3 -B tests/acceptance/sleep-wake/run.py
+      - name: Publish only the actual accepted image
+        run: |
+          image="ghcr.io/flndrn-dev/briven-engine:sleep-wake-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker tag "local/briven-engine-acceptance:${GITHUB_SHA}" "$image"
+          docker push "$image"
+          docker image inspect "$image" --format '{{json .Id}}' > "$RUNNER_TEMP/accepted-engine-config.json"
+          printf '%s\n' "$image" > "$RUNNER_TEMP/accepted-engine-image.txt"
+      - name: Preserve redacted candidate acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sleep-wake-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/briven-durability-*/evidence.jsonl
+            ${{ runner.temp }}/briven-durability-*/summary.json
+            ${{ runner.temp }}/accepted-engine-config.json
+            ${{ runner.temp }}/accepted-engine-image.txt
+          if-no-files-found: error
+          retention-days: 30
