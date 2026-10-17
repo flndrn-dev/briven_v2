@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::customer_credential::ServiceKind;
+use super::saved_copy::RemovalScope;
 use anyhow::{Result, bail};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
@@ -25,6 +26,7 @@ pub struct Principal {
     pub organization: String,
     pub role: Role,
     pub service_scope: Option<(String, ServiceKind)>,
+    pub removal_scope: Option<RemovalScope>,
 }
 
 impl Principal {
@@ -33,7 +35,7 @@ impl Principal {
     }
 
     pub fn is_customer(&self) -> bool {
-        self.service_scope.is_none()
+        self.service_scope.is_none() && self.removal_scope.is_none()
     }
 
     pub fn service_for(&self, project: &str) -> Option<ServiceKind> {
@@ -41,6 +43,15 @@ impl Principal {
             .as_ref()
             .filter(|(id, _)| id == project && self.can_write())
             .map(|(_, kind)| *kind)
+    }
+
+    pub fn removal_for(&self, project: &str, branch: &str, timeline: &str) -> bool {
+        matches!(self.role, Role::Admin | Role::Owner)
+            && self.service_scope.is_none()
+            && self
+                .removal_scope
+                .as_ref()
+                .is_some_and(|scope| scope.matches(project, branch, timeline))
     }
 }
 
@@ -53,6 +64,7 @@ struct IdentityClaims {
     exp: u64,
     service_project: Option<String>,
     service_kind: Option<String>,
+    database_removal: Option<RemovalScope>,
 }
 
 impl AuthConfig {
@@ -153,10 +165,19 @@ impl AuthConfig {
                 }
                 _ => return None,
             };
+            if let Some(scope) = &claims.database_removal {
+                if service_scope.is_some()
+                    || !matches!(role, Role::Admin | Role::Owner)
+                    || !scope.valid()
+                {
+                    return None;
+                }
+            }
             return Some(Principal {
                 organization: claims.org_id,
                 role,
                 service_scope,
+                removal_scope: claims.database_removal,
             });
         }
         let hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
@@ -167,6 +188,7 @@ impl AuthConfig {
                 organization: organization.clone(),
                 role: Role::Admin,
                 service_scope: None,
+                removal_scope: None,
             })
     }
 }
@@ -191,6 +213,111 @@ fn valid_customer_org(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    fn removal_token(scope: serde_json::Value, role: &str, service: bool) -> (AuthConfig, String) {
+        let secret = "removal-test-secret-at-least-32-characters";
+        let auth = AuthConfig {
+            keys: Vec::new(),
+            identity_key: Some(DecodingKey::from_secret(secret.as_bytes())),
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut claims = serde_json::json!({"iss":"briven-api","aud":"briven-control","sub":"saved-copy-broker","org_id":"org_removal","role":role,"iat":now,"exp":now+60,"database_removal":scope});
+        if service {
+            claims["service_project"] = serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            claims["service_kind"] = serde_json::json!("platform");
+        }
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+        (auth, token)
+    }
+
+    fn removal_scope() -> serde_json::Value {
+        serde_json::json!({"project_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"sc-0123456789abcdef01234567","timeline_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","action":"remove_saved_branch"})
+    }
+
+    #[test]
+    fn removal_grant_is_not_customer_or_service_authority() {
+        let (auth, token) = removal_token(removal_scope(), "admin", false);
+        let principal = auth.principal_for(&token).unwrap();
+        assert!(
+            !principal.is_customer(),
+            "a destructive single-target grant must never authorize ordinary customer routes"
+        );
+        assert_eq!(
+            principal.service_for("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            None
+        );
+        assert!(principal.removal_for(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sc-0123456789abcdef01234567",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+        assert!(!principal.removal_for(
+            "cccccccccccccccccccccccccccccccc",
+            "sc-0123456789abcdef01234567",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+        assert!(!principal.removal_for(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "rc-0123456789abcdef01234567",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+        assert!(!principal.removal_for(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sc-0123456789abcdef01234567",
+            "cccccccccccccccccccccccccccccccc"
+        ));
+        assert!(!principal.removal_for(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "main",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+        let mut restored = removal_scope();
+        restored["branch"] = "rc-0123456789abcdef01234567".into();
+        let (auth, token) = removal_token(restored, "owner", false);
+        assert!(auth.principal_for(&token).unwrap().removal_for(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "rc-0123456789abcdef01234567",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+    }
+
+    #[test]
+    fn invalid_or_mixed_removal_grants_are_refused() {
+        for role in ["viewer", "developer"] {
+            let (auth, token) = removal_token(removal_scope(), role, false);
+            assert!(auth.principal_for(&token).is_none(), "role {role}");
+        }
+        let (auth, token) = removal_token(removal_scope(), "admin", true);
+        assert!(
+            auth.principal_for(&token).is_none(),
+            "mixed service/removal scope"
+        );
+        for (field, value) in [
+            ("project_id", "../tenant"),
+            ("timeline_id", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbB"),
+            ("branch", "main"),
+            ("branch", "ordinary"),
+            ("branch", "sc-0123456789abcdef0123456F"),
+            ("action", "restart_worker"),
+            ("unknown", "extra"),
+        ] {
+            let mut scope = removal_scope();
+            scope[field] = value.into();
+            let (auth, token) = removal_token(scope, "owner", false);
+            assert!(
+                auth.principal_for(&token).is_none(),
+                "invalid {field}: {value}"
+            );
+        }
+    }
+
     #[test]
     fn signed_services_cannot_use_customer_authority_or_another_tenant() {
         use super::ServiceKind;
