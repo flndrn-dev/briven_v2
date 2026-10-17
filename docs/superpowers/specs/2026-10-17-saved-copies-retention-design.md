@@ -61,4 +61,4 @@ Sequence: implement/test → exact-source Linux acceptance → publish immutable
 
 Close this selected gap only when the chosen retention behavior, safe reusable quota, actual save/restore/removal, permission/refusal paths, restart continuity, public activation, cleanup and preservation pass. Report it separately from final credential rotation, scheduled backups and other open platform gates.
 
-**Review status:** Prepared for owner review. No product source, live feature flag, worker mode, compute or stored timeline has been changed in this task.
+**Review status:** Owner approved native execution on 17 October; final activation confirmed at action time. Required acceptance passed; see `../reports/2026-10-17-operations-closure-acceptance.md`.

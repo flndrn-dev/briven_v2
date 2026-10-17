@@ -34,4 +34,4 @@ This automatic authority contains no API/database/host restart, Docker control, 
 
 Close this gap only when exact-source Linux acceptance, matching live success/failure/review drills, real owner activation, the actual automatic-loop check, cleanup and preservation all pass. Report the fixed target, active mode, accepted build/drill/attempt and limitations. This closes one reviewed worker playbook; other application workers and database/host recovery are outside this contract.
 
-**Review status:** Prepared for owner review; no new live fault, mode change or activation has occurred.
+**Review status:** Owner approved native execution on 17 October; final activation confirmed at action time. Required acceptance passed; see `../reports/2026-10-17-operations-closure-acceptance.md`.
