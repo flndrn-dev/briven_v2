@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('durability_fixture', HERE.parent / 'postgres-durability/run.py')
@@ -164,8 +165,10 @@ class Acceptance(fixture.Acceptance):
         endpoint = self.endpoint()
         if marker == 'enable-config':
             self.engine('mkdir', '-p', RUNTIME)
-            self.cmd(['docker', 'cp', str(HERE / 'cli-barrier.sh'), self.row('engine')['Id'] + ':/tmp/lifecycle-cli.sh'])
-            self.engine('chmod', '700', '/tmp/lifecycle-cli.sh')
+            installed = subprocess.run(['docker', 'exec', '-i', self.row('engine')['Id'], 'sh', '-c',
+                                        'umask 077; cat > /tmp/lifecycle-cli.sh; chmod 700 /tmp/lifecycle-cli.sh'],
+                                       input=(HERE / 'cli-barrier.sh').read_text(), capture_output=True, text=True, timeout=15)
+            assert installed.returncode == 0, 'Owned CLI barrier install failed'
             self.engine('sh', '-c', 'printf "%s\\n" "$2" > "$1/target"', 'briven-owned-target', RUNTIME, endpoint)
             # Prepared transactions are enabled only in this disposable fixture.
             self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v16/lib', 'briven_local', 'endpoint', 'stop', endpoint, '--mode', 'smart', '--no-wait')
@@ -320,7 +323,8 @@ def main():
     except Exception as error:
         acceptance.summary['passed'] = False
         reason = str(error) if isinstance(error, AssertionError) and re.fullmatch('[a-zA-Z0-9 ,;-]{1,160}', str(error)) else 'details suppressed'
-        acceptance.report('database sleep wake acceptance failed', result='fail', phase=acceptance.phase, errorClass=type(error).__name__, reason=reason)
+        frames = [frame for frame in traceback.extract_tb(error.__traceback__) if frame.filename == __file__]
+        acceptance.report('database sleep wake acceptance failed', result='fail', phase=acceptance.phase, errorClass=type(error).__name__, reason=reason, guardLine=frames[-1].lineno if frames else None)
         try: acceptance.diagnose()
         except Exception: pass
     finally:
