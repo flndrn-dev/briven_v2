@@ -32,6 +32,19 @@ def guard_api(argv, parent):
     assert argv in (['/usr/local/bin/briven_control_api'], ['briven_control_api']) and parent in (0, 1), 'Unbound API process refused'
 
 
+def api_exit_observed(result):
+    assert result.returncode == 0, 'Owned API exit inspection failed'
+    if result.stdout.strip() == 'absent':
+        return True
+    state = result.stdout.rsplit(') ', 1)[1].split()[0]
+    assert state in {'R', 'S', 'D', 'Z', 'T', 't', 'X', 'I', 'P'}, 'Unknown owned process state'
+    return state in {'Z', 'X'}
+
+
+def guard_connection_refused(result):
+    assert result.returncode == 7 and 'Connection refused' in result.stderr, 'Owned API listener absence was not proved'
+
+
 class Acceptance(fixture.Acceptance):
     def __init__(self):
         global SOURCE, IMAGE, CONFIG
@@ -57,6 +70,7 @@ class Acceptance(fixture.Acceptance):
         self.capacity_server = None
         self.sleep_launches = None
         self.binding_backup = None
+        self.api_old_pid = self.api_new_pid = None
         overlay = self.root / 'candidate-compose.json'
         overlay.write_text(json.dumps({'services': {name: {'image': IMAGE} for name in ['engine', 'certificates']}}))
         self.compose += ['-f', str(overlay)]
@@ -137,6 +151,7 @@ class Acceptance(fixture.Acceptance):
             assert self.engine('cat', '/proc/1/stat').rsplit(') ', 1)[1].split()[0] in ('T', 't'), 'Owned supervisor did not actually stop'
             self.shell_paused = True
         pid = int(self.engine('cat', '/var/lib/briven/briven-control-api.pid').strip())
+        self.api_old_pid, self.api_new_pid = pid, None
         guard_api(*self.identity(pid))
         assert self.engine('readlink', f'/proc/{pid}/exe').strip() == '/usr/local/bin/briven_control_api'
         self.signal(pid, 'KILL')
@@ -144,13 +159,13 @@ class Acceptance(fixture.Acceptance):
         # old health response and stale PID file satisfy replacement readiness.
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            old = self.cmd(['docker', 'exec', row['Id'], 'cat', f'/proc/{pid}/stat'], check=False)
-            if old.returncode or old.stdout.rsplit(') ', 1)[1].split()[0] in ('Z', 'X'):
+            old = self.cmd(['docker', 'exec', row['Id'], 'sh', '-c', 'if test ! -d "/proc/$1"; then printf "absent\\n"; elif value=$(cat "/proc/$1/stat" 2>/dev/null); then printf "%s\\n" "$value"; elif test ! -d "/proc/$1"; then printf "absent\\n"; else exit 1; fi', 'briven-owned-api-exit', str(pid)], check=False)
+            if api_exit_observed(old):
                 break
             time.sleep(0.1)
         else:
             raise AssertionError('Owned old API did not exit before replacement')
-        assert self.cmd(['docker', 'exec', row['Id'], 'curl', '-fsS', '--max-time', '1', 'http://127.0.0.1:8787/healthz'], check=False).returncode != 0, 'An API still serves before replacement'
+        guard_connection_refused(self.cmd(['docker', 'exec', row['Id'], 'curl', '--noproxy', '*', '-vsS', '--max-time', '1', 'http://127.0.0.1:8787/healthz'], check=False))
         if barrier:
             wrapper = int(self.engine('cat', RUNTIME + '/barrier-pid').strip())
             argv, _ = self.identity(wrapper)
@@ -166,6 +181,7 @@ class Acceptance(fixture.Acceptance):
             result = self.cmd(['docker', 'exec', row['Id'], 'curl', '-fsS', '--max-time', '1', 'http://127.0.0.1:8787/healthz'], check=False)
             if result.returncode == 0:
                 new = int(self.engine('cat', '/var/lib/briven/briven-control-api.pid').strip())
+                self.api_new_pid = new
                 if new == pid:
                     time.sleep(0.2)
                     continue
@@ -463,6 +479,13 @@ class Acceptance(fixture.Acceptance):
     def diagnose(self):
         row = self.row('engine')
         self.report('owned engine terminal state', running=row['State']['Running'], exitCode=row['State']['ExitCode'], oomKilled=row['State'].get('OOMKilled'), finishedAt=row['State'].get('FinishedAt'))
+        if row['State']['Running']:
+            try:
+                raw = self.cmd(['docker', 'exec', row['Id'], 'tail', '-c', '32768', '/tmp/lifecycle-api.log'], check=False)
+                patterns = {'duplicate-api-owner': r'another control API|already owns this engine repository', 'listener-bind-failed': r'Address already in use|address already in use', 'invalid-lifecycle-configuration': r'invalid.*lifecycle|lifecycle.*invalid', 'cli-not-found': r'briven_local binary not found', 'panic': r'panicked|panic', 'catalog-or-database-error': r'catalog.*error|database.*error|error connecting'}
+                self.report('bounded replacement API failure categories', available=raw.returncode == 0, signals=[label for label, pattern in patterns.items() if re.search(pattern, raw.stdout, re.IGNORECASE)], oldPid=self.api_old_pid, newPid=self.api_new_pid)
+            except Exception as error:
+                self.report('replacement API diagnostic unavailable', errorClass=type(error).__name__)
         if row['State']['Running'] and (self.root / 'lifecycle-private.json').exists():
             try:
                 record = self.record()
