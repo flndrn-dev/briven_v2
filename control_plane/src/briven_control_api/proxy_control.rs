@@ -71,6 +71,9 @@ pub(super) async fn endpoint(
         .get(id)
         .cloned()
         .ok_or(ApiError(StatusCode::NOT_FOUND, "endpoint not found"))?;
+    endpoint
+        .ensure_available()
+        .map_err(|_| ApiError(StatusCode::CONFLICT, "branch removal has started"))?;
     if state
         .catalog
         .ready_project(&endpoint.tenant_id.to_string())

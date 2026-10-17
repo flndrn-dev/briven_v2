@@ -99,6 +99,112 @@ pub struct LocalEnv {
     pub generate_local_ssl_certs: bool,
 }
 
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn mapping_removal_is_exact_and_tombstones_block_registration_and_start_lookup() {
+        let path = env::temp_dir().join(format!("briven-mapping-{:016x}", rand::random::<u64>()));
+        fs::create_dir(&path).unwrap();
+        let cleanup = scopeguard::guard(path, |path| fs::remove_dir_all(path).unwrap());
+        let mut env = LocalEnv {
+            base_data_dir: cleanup.to_path_buf(),
+            pg_distrib_dir: PathBuf::new(),
+            neon_distrib_dir: PathBuf::new(),
+            default_tenant_id: None,
+            private_key_path: PathBuf::new(),
+            public_key_path: PathBuf::new(),
+            broker: NeonBroker::default(),
+            storage_controller: NeonStorageControllerConf::default(),
+            pageservers: vec![],
+            safekeepers: vec![],
+            endpoint_storage: EndpointStorageConf::default(),
+            control_plane_api: Url::parse("http://127.0.0.1:1234").unwrap(),
+            control_plane_hooks_api: None,
+            branch_name_mappings: HashMap::new(),
+            generate_local_ssl_certs: false,
+        };
+        let a = TenantId::generate();
+        let b = TenantId::generate();
+        let timeline = TimelineId::generate();
+        let other = TimelineId::generate();
+        let branch = format!("rc-{}", "f".repeat(24));
+        env.register_branch_mapping(branch.clone(), a, timeline)
+            .unwrap();
+        env.register_branch_mapping(branch.clone(), b, other)
+            .unwrap();
+        env.register_branch_mapping("main".into(), a, other)
+            .unwrap();
+        assert!(env.unregister_branch_mapping(&branch, a, other).is_err());
+        let scope = crate::reserved_branch_removal::RemovalScope {
+            project_id: a.to_string(),
+            branch: branch.clone(),
+            timeline_id: timeline.to_string(),
+            action: crate::reserved_branch_removal::RemovalAction::RemoveSavedBranch,
+        };
+        let mut journal = crate::reserved_branch_removal::Journal::lock(&cleanup).unwrap();
+        journal.begin(&scope, "org_fixture", None).unwrap();
+        // Simulate the earliest interrupted intent: no timeline index yet.
+        fs::remove_file(
+            cleanup
+                .join("reserved-removals")
+                .join(a.to_string())
+                .join(format!("timeline-{timeline}.json")),
+        )
+        .unwrap();
+        assert!(
+            crate::reserved_branch_removal::ensure_timeline_available(&env, a, timeline).is_err()
+        );
+        assert!(
+            env.register_branch_mapping(branch.clone(), a, timeline)
+                .is_err()
+        );
+        assert!(
+            env.register_branch_mapping(branch.clone(), a, other)
+                .is_err()
+        );
+        journal.begin(&scope, "org_fixture", None).unwrap();
+        env.unregister_branch_mapping(&branch, a, timeline).unwrap();
+        env.unregister_branch_mapping(&branch, a, timeline).unwrap();
+        assert_eq!(env.get_branch_timeline_id(&branch, b), Some(other));
+        assert_eq!(env.get_branch_timeline_id("main", a), Some(other));
+        assert!(
+            crate::reserved_branch_removal::ensure_timeline_available(&env, a, timeline).is_err()
+        );
+        crate::reserved_branch_removal::ensure_timeline_available(&env, b, other).unwrap();
+    }
+
+    #[test]
+    fn config_commit_replaces_the_file_atomically_without_truncating_existing_readers() {
+        let path = env::temp_dir().join(format!("briven-config-{:016x}", rand::random::<u64>()));
+        fs::create_dir(&path).unwrap();
+        let cleanup = scopeguard::guard(path, |path| fs::remove_dir_all(path).unwrap());
+        let mut config = OnDiskConfig::default();
+        LocalEnv::persist_config_impl(&cleanup, &config).unwrap();
+        let mut old = fs::File::open(cleanup.join("config")).unwrap();
+        config.default_tenant_id = Some(TenantId::generate());
+        LocalEnv::persist_config_impl(&cleanup, &config).unwrap();
+        let mut prior = String::new();
+        old.read_to_string(&mut prior).unwrap();
+        assert_eq!(
+            toml::from_str::<OnDiskConfig>(&prior)
+                .unwrap()
+                .default_tenant_id,
+            None
+        );
+        let current = fs::read_to_string(cleanup.join("config")).unwrap();
+        assert_eq!(toml::from_str::<OnDiskConfig>(&current).unwrap(), config);
+        assert_eq!(
+            fs::metadata(cleanup.join("config")).unwrap().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read_dir(&*cleanup).unwrap().count(), 1);
+    }
+}
+
 /// On-disk state stored in `.briven/config`.
 #[derive(PartialEq, Eq, Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -599,6 +705,12 @@ impl LocalEnv {
         tenant_id: TenantId,
         timeline_id: TimelineId,
     ) -> anyhow::Result<()> {
+        crate::reserved_branch_removal::ensure_available(
+            &self.base_data_dir,
+            &tenant_id.to_string(),
+            Some(&branch_name),
+            &timeline_id.to_string(),
+        )?;
         let existing_values = self
             .branch_name_mappings
             .entry(branch_name.clone())
@@ -632,6 +744,29 @@ impl LocalEnv {
             .iter()
             .find(|(mapped_tenant_id, _)| mapped_tenant_id == &tenant_id)
             .map(|&(_, timeline_id)| timeline_id)
+    }
+
+    /// Removal never rewrites another tenant's mapping or accepts a changed ID.
+    pub fn unregister_branch_mapping(
+        &mut self,
+        branch: &str,
+        tenant: TenantId,
+        timeline: TimelineId,
+    ) -> anyhow::Result<()> {
+        if let Some(bound) = self.get_branch_timeline_id(branch, tenant) {
+            if bound != timeline {
+                bail!("branch mapping changed during removal");
+            }
+            let bindings = self
+                .branch_name_mappings
+                .get_mut(branch)
+                .expect("mapping was found");
+            bindings.retain(|(id, _)| *id != tenant);
+            if bindings.is_empty() {
+                self.branch_name_mappings.remove(branch);
+            }
+        }
+        Ok(())
     }
 
     pub fn timeline_name_mappings(&self) -> HashMap<TenantTimelineId, String> {
@@ -814,14 +949,24 @@ impl LocalEnv {
     }
 
     pub fn persist_config_impl(base_path: &Path, config: &OnDiskConfig) -> anyhow::Result<()> {
-        let conf_content = &toml::to_string_pretty(config)?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let conf_content = toml::to_string_pretty(config)?;
         let target_config_path = base_path.join("config");
-        fs::write(&target_config_path, conf_content).with_context(|| {
-            format!(
-                "Failed to write config file into path '{}'",
-                target_config_path.display()
-            )
-        })
+        let temporary = base_path.join(format!("config-{:016x}.tmp", rand::random::<u64>()));
+        let cleanup = scopeguard::guard(temporary, |path| {
+            let _ = fs::remove_file(path);
+        });
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&*cleanup)?;
+        file.write_all(conf_content.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&*cleanup, &target_config_path)?;
+        fs::File::open(base_path)?.sync_all()?;
+        Ok(())
     }
 
     // this function is used only for testing purposes in CLI e g generate tokens during init

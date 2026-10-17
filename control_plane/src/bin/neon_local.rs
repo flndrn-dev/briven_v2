@@ -1251,6 +1251,12 @@ async fn handle_timeline(cmd: &TimelineCmd, env: &mut local_env::LocalEnv) -> Re
             let new_branch_name = &args.branch_name;
             let new_timeline_id_opt = args.timeline_id;
             let new_timeline_id = new_timeline_id_opt.unwrap_or(TimelineId::generate());
+            control_plane::reserved_branch_removal::ensure_available(
+                &env.base_data_dir,
+                &tenant_id.to_string(),
+                Some(new_branch_name),
+                &new_timeline_id.to_string(),
+            )?;
 
             let storage_controller = StorageController::from_env(env);
             let create_req = TimelineCreateRequest {
@@ -1277,6 +1283,12 @@ async fn handle_timeline(cmd: &TimelineCmd, env: &mut local_env::LocalEnv) -> Re
             let tenant_id = get_tenant_id(args.tenant_id, env)?;
             let timeline_id = args.timeline_id;
             let branch_name = &args.branch_name;
+            control_plane::reserved_branch_removal::ensure_available(
+                &env.base_data_dir,
+                &tenant_id.to_string(),
+                Some(branch_name),
+                &timeline_id.to_string(),
+            )?;
 
             // Parse base inputs
             let base = (args.base_lsn, args.base_tarfile.clone());
@@ -1337,6 +1349,12 @@ async fn handle_timeline(cmd: &TimelineCmd, env: &mut local_env::LocalEnv) -> Re
             let tenant_id = get_tenant_id(args.tenant_id, env)?;
             let new_timeline_id = args.timeline_id.unwrap_or(TimelineId::generate());
             let new_branch_name = &args.branch_name;
+            control_plane::reserved_branch_removal::ensure_available(
+                &env.base_data_dir,
+                &tenant_id.to_string(),
+                Some(new_branch_name),
+                &new_timeline_id.to_string(),
+            )?;
             let ancestor_branch_name = args
                 .ancestor_branch_name
                 .clone()
@@ -1346,6 +1364,12 @@ async fn handle_timeline(cmd: &TimelineCmd, env: &mut local_env::LocalEnv) -> Re
                 .ok_or_else(|| {
                     anyhow!("Found no timeline id for branch name '{ancestor_branch_name}'")
                 })?;
+
+            control_plane::reserved_branch_removal::ensure_timeline_available(
+                env,
+                tenant_id,
+                ancestor_timeline_id,
+            )?;
 
             let start_lsn = args.ancestor_start_lsn;
             let storage_controller = StorageController::from_env(env);

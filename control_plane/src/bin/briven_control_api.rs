@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use axum::extract::{Path as RoutePath, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use control_plane::endpoint::{ComputeControlPlane, EndpointStatus};
 use control_plane::local_env::{LocalEnv, base_path};
@@ -40,6 +40,8 @@ mod lifecycle_store;
 mod proxy_control;
 #[path = "../briven_control_api/saved_copy.rs"]
 mod saved_copy;
+#[path = "../briven_control_api/saved_copy_removal.rs"]
+mod saved_copy_removal;
 
 use auth::{AuthConfig, Principal};
 use catalog::{Catalog, CreateError, Project, ProjectState};
@@ -595,6 +597,20 @@ async fn create_branch(
         .timeline_id
         .unwrap_or_else(TimelineId::generate)
         .to_string();
+    control_plane::reserved_branch_removal::ensure_available(
+        &state.repo,
+        &id,
+        Some(&input.name),
+        &timeline_id,
+    )
+    .map_err(|_| ApiError(StatusCode::CONFLICT, "branch removal has started"))?;
+    control_plane::reserved_branch_removal::ensure_timeline_available(
+        &env,
+        tenant_id,
+        env.get_branch_timeline_id(parent, tenant_id)
+            .expect("parent was found"),
+    )
+    .map_err(|_| ApiError(StatusCode::CONFLICT, "parent branch removal has started"))?;
     let command = input.command(&id, &timeline_id);
     let args = command.iter().map(String::as_str).collect::<Vec<_>>();
     run_cli(&state, &args).await?;
@@ -998,6 +1014,10 @@ async fn main() -> Result<()> {
             get(list_branches).post(create_branch),
         )
         .route("/v1/projects/{id}/computes", get(list_computes))
+        .route(
+            "/v1/projects/{id}/branches/{branch}/reserved-removal",
+            delete(saved_copy_removal::remove),
+        )
         .route(
             "/v1/projects/{id}/branches/{branch}/computes",
             post(create_compute),

@@ -208,6 +208,11 @@ impl ComputeControlPlane {
         drop_subscriptions_before_start: bool,
         privileged_role_name: Option<String>,
     ) -> Result<Arc<Endpoint>> {
+        crate::reserved_branch_removal::ensure_timeline_available(
+            &self.env,
+            tenant_id,
+            timeline_id,
+        )?;
         let pg_port = pg_port.unwrap_or_else(|| self.get_port());
         let external_http_port = external_http_port.unwrap_or_else(|| self.get_port() + 1);
         let internal_http_port = internal_http_port.unwrap_or_else(|| external_http_port + 1);
@@ -706,7 +711,16 @@ impl Endpoint {
         })
     }
 
+    pub fn ensure_available(&self) -> Result<()> {
+        crate::reserved_branch_removal::ensure_timeline_available(
+            &self.env,
+            self.tenant_id,
+            self.timeline_id,
+        )
+    }
+
     pub async fn start(&self, args: EndpointStartArgs) -> Result<()> {
+        self.ensure_available()?;
         if self.status() == EndpointStatus::Running {
             anyhow::bail!("The endpoint is already running");
         }

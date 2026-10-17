@@ -114,6 +114,63 @@ impl Processes {
         }
     }
 
+    /// PID files alone cannot prove exit: a missing file may hide an orphan.
+    /// This bounded final census runs only for explicit destructive removal.
+    pub fn absence_confirmed(endpoint: &Endpoint) -> bool {
+        let processes = Self::inspect(endpoint);
+        if processes.postgres != Presence::Absent || processes.controller != Presence::Absent {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let Ok(entries) = std::fs::read_dir("/proc") else {
+                return false;
+            };
+            let directory = endpoint.pgdata();
+            let Some(pgdata) = directory.to_str() else {
+                return false;
+            };
+            let mut count = 0;
+            for entry in entries {
+                let Ok(entry) = entry else {
+                    return false;
+                };
+                if !entry
+                    .file_name()
+                    .as_encoded_bytes()
+                    .iter()
+                    .all(u8::is_ascii_digit)
+                {
+                    continue;
+                }
+                count += 1;
+                if count > 16_384 {
+                    return false;
+                }
+                let command = match std::fs::read(entry.path().join("cmdline")) {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(_) => return false,
+                };
+                let argv = command
+                    .split(|b| *b == 0)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| std::str::from_utf8(v).unwrap_or(""))
+                    .collect::<Vec<_>>();
+                if matches_command(&argv, pgdata, endpoint.id(), false)
+                    || matches_command(&argv, pgdata, endpoint.id(), true)
+                {
+                    return false;
+                }
+            }
+            true
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
     pub fn observed(&self, endpoint: &Endpoint, sql_ready: bool) -> Observation {
         match (self.postgres, self.controller) {
             (Presence::Alive, Presence::Alive) if sql_ready => Observation::Ready,

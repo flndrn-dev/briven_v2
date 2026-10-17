@@ -132,6 +132,22 @@ impl Client {
             .map_err(Error::ReceiveBody)
     }
 
+    /// Include archived children when checking whether removal is safe.
+    pub async fn list_timelines_and_offloaded(
+        &self,
+        tenant_shard_id: TenantShardId,
+    ) -> Result<pageserver_api::models::TimelinesInfoAndOffloaded> {
+        let uri = format!(
+            "{}/v1/tenant/{tenant_shard_id}/timeline_and_offloaded",
+            self.mgmt_api_endpoint
+        );
+        self.get(&uri)
+            .await?
+            .json()
+            .await
+            .map_err(Error::ReceiveBody)
+    }
+
     pub async fn timeline_info(
         &self,
         tenant_shard_id: TenantShardId,

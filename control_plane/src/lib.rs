@@ -14,5 +14,7 @@ pub mod endpoint_storage;
 pub mod local_env;
 pub mod pageserver;
 pub mod postgresql_conf;
+pub mod reserved_branch_removal;
+pub mod reserved_branch_removal_types;
 pub mod safekeeper;
 pub mod storage_controller;
