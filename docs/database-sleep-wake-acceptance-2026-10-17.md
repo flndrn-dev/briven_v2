@@ -17,11 +17,19 @@ No production fault injection was used to discover the defect. All faulted resou
 
 ## Release gate
 
-Application source: `a6dc9da1959bf4f2a64f6ae2d90ad5800fc031de`. Acceptance harness source: `54a7c5371183343c1bf82c996202fb2fb93ee9bc` (before evidence-only report updates).
+Application source: `a6dc9da1959bf4f2a64f6ae2d90ad5800fc031de`. The exact acceptance harness revision is recorded independently by each workflow and its source proof; no accepted release receipt exists yet.
 
 The complete release workflow first proves that the application inputs and runtime Docker instructions match that application revision. Its separate CI-only Docker target runs the actual Rust lifecycle store/activity tests against fresh private bundled PostgreSQL; the stage is excluded from the runtime image. Publication is downstream of that gate, real saved-copy removal/interrupted-cleanup acceptance and full real sleep/wake/restart acceptance on the same image. Application and harness revisions are recorded separately in OCI labels, source evidence and both suite summaries. The accepted manifest and actual image configuration must be independently verified before use.
 
 Build run [39056383712](https://github.com/flndrn-dev/briven_v2/actions/runs/39056383712) predates the required Rust/PostgreSQL CI stage and cannot qualify for release acceptance. The complete workflow must pass on the updated harness before deployment; this earlier run is retained only as build diagnostics/cache preparation.
+
+That build completed successfully and was canceled before publication. Later diagnostic runs retained the same application source. The actual Rust/PostgreSQL and saved-copy suites passed. Fixture-only repairs addressed process inspection during graceful exit and a missing cache import in the second build step.
+
+Run [39066780374](https://github.com/flndrn-dev/briven_v2/actions/runs/39066780374) passed the missing-controller-PID/no-replacement regression, permission/binding checks, transaction/idle/prepared-work protection, failed-inspection recovery, and all three normal sleep/eight-connection cold-wake cycles. A later preparatory wait ended in acknowledged `stopping`; a post-timeout census found both processes absent while durable `sleeping` reconciliation remained pending. That census does not prove exit by the earlier 150-second deadline. It is not a complete acceptance pass.
+
+The revised gate separates those observations: actual exit must be independently proved within the original wait, with acknowledged recent smart dispatch, no failure, and unchanged startup/CLI counts. Only then may one fixed 35-second window cover the 30-second scheduler's durable reconciliation. No allowance applies to running, unknown, live or unacknowledged state. The failed-inspection recovery allowance remains 240 seconds, with its timing measured after both fault resolution and idle expiry.
+
+Passive fixture-only connection/disconnection logs and existing status polling now record classified session lifetimes, activity-clock changes and evidence coverage. Raw SQL, roles, credentials and application-name text are not included in the artifact. Unpaired events are explicitly unpaired evidence, not a claim that a backend is still alive. This evidence must attribute late activity before completion is claimed.
 
 The first candidate build, [39054357452](https://github.com/flndrn-dev/briven_v2/actions/runs/39054357452), stopped before compilation because the pinned `tonic-reflection` crate download returned HTTP 500. No candidate image was published.
 
@@ -29,7 +37,7 @@ The first candidate build, [39054357452](https://github.com/flndrn-dev/briven_v2
 
 - Real disposable local PostgreSQL: 11 Rust lifecycle/storage/activity cases and two ephemeral-monitor cases passed, including real prepared work, concurrent generation claims, reopened state, unchanged project schema compatibility, and inspection-connection closure. The temporary cluster and processes were removed.
 - Three Rust resource identity/admission tests and six host resource-protocol tests passed. These are not a new kernel resource-stress acceptance claim.
-- Five fixture-guard/cleanup tests passed, including credential-file removal after inventory failure and namespace teardown when the engine never started.
+- Fourteen fixture-guard, cleanup and passive-log projection tests passed locally, including process-read races, rejection of failed probes as absence, credential-file removal after inventory failure and namespace teardown when the engine never started. Eight scenarios exercising the actual Node deadline function passed without network or credentials, including a late direct response, late physical proof, changed binding and missed reconciliation.
 - Focused Linux diagnostic [39055979282](https://github.com/flndrn-dev/briven_v2/actions/runs/39055979282) passed running and sleeping API restarts, actual TLS cold wake, data/index checks and cleanup against the deployed immutable image. Its suite is deliberately labeled diagnostic; it does not satisfy the expanded release gate.
 - Earlier Linux run [39053531957](https://github.com/flndrn-dev/briven_v2/actions/runs/39053531957) passed three real sleep/eight-connection TLS wake cycles but later timed out waiting for sleep after an API restart. This partial result is not counted as full acceptance. The expanded harness records lifecycle flags, bound processes and backend categories for any recurrence.
 - Fresh code review identified acceptance omissions. The harness now includes independent process census and actual CLI invocation counts; duplicate/stale configuration and actual Rust catalog CAS checks; a real stored-binding fault; negative resource-service admission with an exact handled-request receipt; independent cleanup attempts; sleep-time monitoring observation; and a single live-trial deadline with bounded cleanup.

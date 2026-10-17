@@ -31,6 +31,8 @@
 
 ## Task 1 — Immutable-image Linux acceptance
 
+**Evidence refinement after isolated trials:** A physical-exit observation and the durable `sleeping` record are separate boundaries under the existing 30-second scheduler. Keep each original wait as the physical-exit deadline. A single additional 35-second reconciliation window is allowed only after independent absence proof within that deadline, recent acknowledged smart dispatch, no failure, stable binding/policy/activity/start count and unchanged actual CLI invocations. Require final durable sleep and an independent second absence check. Keep the separate failed-inspection recovery wait bounded at 240 seconds; the three normal-cycle physical-exit waits remain 150 seconds. Collect passive fixture connection lifetimes and status changes to attribute late activity without introducing observer SQL sessions during an idle wait.
+
 **Files:** Create `tests/acceptance/sleep-wake/run.py`, `probe.mjs`, `cli-barrier.sh`, `test_guards.py`; create `.github/workflows/sleep-wake-acceptance.yml`. Reuse `tests/acceptance/postgres-durability/run.py`, Compose and locked pg dependency without changing their existing acceptance behavior.
 
 **Interfaces:** `Acceptance` subclasses the durability fixture, pins engine source/manifest/config from the spec, and overrides `execute`, `run_probe`, `cleanup`. `probe.mjs` communicates fixed JSON markers over stdout and waits for exact stdin acknowledgments. `cli-barrier.sh` delegates to the actual bundled CLI and holds only a named owned endpoint's start/stop boundary. Reports contain controlled labels/counts/checksums, never credentials, connection strings or raw logs.

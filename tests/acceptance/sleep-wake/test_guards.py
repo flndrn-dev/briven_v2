@@ -79,6 +79,15 @@ class LifecycleFaultGuards(unittest.TestCase):
         proof.cmd = Mock(side_effect=[SimpleNamespace(returncode=0, stdout='42'), SimpleNamespace(returncode=125, stdout='')])
         with self.assertRaises(AssertionError): proof.processes()
 
+    def test_reconciliation_requires_proven_recent_exit_before_original_deadline(self):
+        record = {'phase': 'stopping', 'stopRequested': True, 'failure': None, 'phaseSince': 10}
+        self.assertTrue(module.reconciliation_eligible(record, True, 15000, 20000))
+        self.assertFalse(module.reconciliation_eligible(record, False, 15000, 20000))
+        self.assertFalse(module.reconciliation_eligible(record, True, 21000, 20000))
+        self.assertFalse(module.reconciliation_eligible(record, True, 46000, 50000))
+        for key, value in [('phase', 'running'), ('phase', 'failed'), ('stopRequested', False), ('failure', 'activity_unavailable')]:
+            self.assertFalse(module.reconciliation_eligible({**record, key: value}, True, 15000, 20000))
+
     def test_private_files_are_removed_even_when_inventory_cleanup_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
             proof = module.Acceptance.__new__(module.Acceptance)

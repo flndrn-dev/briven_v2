@@ -15,6 +15,9 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('durability_fixture', HERE.parent / 'postgres-durability/run.py')
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
+session_spec = importlib.util.spec_from_file_location('session_logs', HERE / 'session_logs.py')
+session_logs = importlib.util.module_from_spec(session_spec)
+session_spec.loader.exec_module(session_logs)
 SOURCE = '07711c126016e0b8c7958a62e5fc95d22a844bd2'
 IMAGE = 'ghcr.io/flndrn-dev/briven-engine@sha256:359ca9530ceb35f77ee83d7dea1b1d409ccd9647810cd97df35843ba8ab3bbdc'
 CONFIG = 'sha256:94578897365a549c114be6578de1046807612954b913f699d70fad283a9231c6'
@@ -45,6 +48,14 @@ def guard_connection_refused(result):
     assert result.returncode == 7 and 'Connection refused' in result.stderr, 'Owned API listener absence was not proved'
 
 
+def reconciliation_eligible(record, absent, observed_at, deadline):
+    return absent and record['phase'] in ('stopping', 'sleeping') and record['stopRequested'] is True and record['failure'] is None and observed_at <= deadline and 0 <= observed_at-record['phaseSince']*1000 <= 35000
+
+
+def preserved_policy(record):
+    return tuple(record[k] for k in ('endpointId', 'projectId', 'timelineId', 'enabled', 'idleSeconds', 'lastDemand', 'starts'))
+
+
 class Acceptance(fixture.Acceptance):
     def __init__(self):
         global SOURCE, IMAGE, CONFIG
@@ -71,6 +82,8 @@ class Acceptance(fixture.Acceptance):
         self.sleep_launches = None
         self.binding_backup = None
         self.api_old_pid = self.api_new_pid = None
+        self.pending_sleep_proof = None
+        self.activity_pause_started = self.activity_pause_resumed = None
         overlay = self.root / 'candidate-compose.json'
         overlay.write_text(json.dumps({'services': {name: {'image': IMAGE} for name in ['engine', 'certificates']}}))
         self.compose += ['-f', str(overlay)]
@@ -180,6 +193,20 @@ done''')
         result = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'env', 'LD_LIBRARY_PATH=/usr/local/v17/lib', 'PGCONNECT_TIMEOUT=3', 'PGOPTIONS=-c statement_timeout=3000', '/usr/local/v17/bin/psql', '-XAtw', '-h', '127.0.0.1', '-p', str(definition['pg_port']), '-U', 'cloud_admin', '-d', 'postgres', '-c', sql], check=False, timeout=10)
         self.report('bounded classified backend snapshot', available=result.returncode == 0, activity=json.loads(result.stdout) if result.returncode == 0 else None)
 
+    def session_evidence(self, record):
+        result = subprocess.run(['docker', 'exec', self.row('engine')['Id'], 'tail', '-c', '2097152', '/var/lib/briven/endpoints/' + self.endpoint() + '/compute.log'], capture_output=True, env=self.env, timeout=30)
+        assert result.returncode == 0 and len(result.stdout) <= 2097152, 'Bounded passive session log read failed'
+        raw = result.stdout.decode('utf8', errors='replace')
+        fault = (self.activity_pause_started, self.activity_pause_resumed) if self.activity_pause_resumed else None
+        summary = session_logs.summarize(raw, 'briven_' + self.endpoint()[3:], record['lastDemand'], fault, observed_at=time.time(), bytes_read=len(result.stdout))
+        assert sum(summary['completed'].values()) > 0, 'Passive session evidence missing'
+        self.report('passive classified session lifetimes', **summary)
+
+    def respond(self, instruction, **values):
+        assert set(values) <= {'exited', 'observedAt', 'record'}
+        self.probe.stdin.write((json.dumps({'instruction': instruction, **values}) + '\n').encode())
+        self.probe.stdin.flush()
+
     def restart_api(self, barrier=False, capacity=False, scheduler=True):
         row = self.row('engine')
         if not self.shell_paused:
@@ -285,15 +312,45 @@ done''')
                 time.sleep(0.25)
             assert all(value is None for value in self.processes().values())
             assert not self.census(), 'Prepared-work setup refuses an orphan or duplicate process'
-            self.engine('sh', '-c', 'printf "\\nmax_prepared_transactions = 4\\n" >> "$1"', 'briven-owned-config', f'/var/lib/briven/endpoints/{endpoint}/postgresql.conf')
+            settings = "\nmax_prepared_transactions = 4\nlog_connections = on\nlog_disconnections = on\nlog_timezone = 'UTC'\nlog_line_prefix = '%m [%p] BRIVEN_ACCEPTANCE_SESSION app=%a| '\n"
+            self.engine('sh', '-c', 'printf "%s" "$2" >> "$1"', 'briven-owned-config', f'/var/lib/briven/endpoints/{endpoint}/postgresql.conf', settings)
             self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v16/lib', 'briven_local', 'endpoint', 'start', endpoint, timeout=150)
             self.restart_api()
         elif marker == 'restart-api':
             before = self.processes()
             self.restart_api()
             assert self.processes() == before, 'API restart changed compute identities'
+        elif marker == 'inspect-stopping-exit':
+            deadline = message['deadline']
+            assert type(deadline) is int and 0 <= deadline-int(time.time()*1000) <= 240000, 'Physical proof deadline is outside current trial'
+            before = self.record()
+            definition = json.loads(self.engine('cat', '/var/lib/briven/endpoints/' + endpoint + '/endpoint.json'))
+            assert before['endpointId'] == endpoint and before['projectId'] == endpoint[3:] and before['timelineId'] == definition['timeline_id']
+            launches = self.launches()
+            absent = all(value is None for value in self.processes().values()) and not self.census()
+            after = self.record()
+            observed_at = int(time.time()*1000)
+            assert preserved_policy(before) == preserved_policy(after) and self.launches() == launches, 'State or launch count changed during physical proof'
+            eligible = reconciliation_eligible(after, absent, observed_at, deadline)
+            if eligible:
+                assert self.pending_sleep_proof is None
+                self.pending_sleep_proof = {'record': after, 'launches': launches, 'observedAt': observed_at, 'deadline': deadline}
+                self.report('physical shutdown proved within original deadline', result='pass', observedAt=observed_at, deadline=deadline, starts=after['starts'], launches=launches)
+            self.respond(marker, exited=bool(eligible), observedAt=observed_at, record=after)
+            return
+        elif marker == 'confirm-sleep-reconciled':
+            proof = self.pending_sleep_proof
+            assert proof and type(message['observedAt']) is int and proof['observedAt'] <= message['observedAt'] <= proof['observedAt']+35000
+            row = self.record()
+            assert row['phase'] == 'sleeping' and row['stopRequested'] and row['failure'] is None
+            assert preserved_policy(row) == preserved_policy(proof['record']) and row['generation'] >= proof['record']['generation']
+            assert all(value is None for value in self.processes().values()) and not self.census() and self.launches() == proof['launches']
+            self.report('durable sleep reconciles within one tick after proven exit', result='pass', physicalObservedAt=proof['observedAt'], durableObservedAt=message['observedAt'], starts=row['starts'], launches=proof['launches'])
+            self.pending_sleep_proof = None
         elif marker == 'inspect-sleep':
+            assert self.pending_sleep_proof is None
             assert not self.census(), 'Sleeping endpoint retains a bound process'
+            self.session_evidence(self.record())
             self.sleep_launches = self.launches()
             self.report('sleeping endpoint has no bound PostgreSQL or compute controller', result='pass')
         elif marker == 'inspect-running':
@@ -362,9 +419,11 @@ done''')
         elif marker == 'pause-postmaster':
             self.paused_postmaster = self.processes()['postgres']
             assert self.paused_postmaster
+            self.activity_pause_started = time.time()
             self.signal(self.paused_postmaster, 'STOP')
         elif marker == 'resume-postmaster':
             self.signal(self.paused_postmaster, 'CONT'); self.paused_postmaster = None
+            self.activity_pause_resumed = time.time()
             self.activity_snapshot()
         elif marker.startswith('arm-'):
             self.mode(marker[4:])
@@ -433,7 +492,7 @@ done''')
                 while b'\n' in buffer:
                     raw, buffer = buffer.split(b'\n', 1)
                     record = json.loads(raw)
-                    assert set(record) <= {'check', 'result', 'phase', 'marker', 'errorClass', 'reason', 'sqlstate', 'cycles', 'checksum', 'starts'}
+                    assert set(record) <= {'check', 'result', 'phase', 'marker', 'errorClass', 'reason', 'sqlstate', 'cycles', 'checksum', 'starts', 'state', 'deadline', 'observedAt'}
                     if 'marker' in record: self.handle(record)
                     else:
                         self.report(record.pop('check'), **record)
@@ -535,6 +594,7 @@ done''')
                 values = self.engine('cat', '/proc/' + api + '/environ').split('\0')
                 selected = dict(v.split('=', 1) for v in values if v.startswith(('BRIVEN_COMPUTE_LIFECYCLE_ENABLED=', 'BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON=', 'BRIVEN_COMPUTE_RESOURCE_SOCKET=')))
                 self.report('owned actual API lifecycle flags', flags=selected)
+                self.session_evidence(record)
             except Exception as error:
                 self.report('owned lifecycle diagnostic unavailable', errorClass=type(error).__name__)
             try: self.activity_snapshot()

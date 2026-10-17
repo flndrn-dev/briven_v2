@@ -17,11 +17,12 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const report=(check,extra={})=>console.log(JSON.stringify({check,result:'pass',...extra}));
 const check=(value,message)=>{if(!value)throw Error(message);report(message);};
 const save=()=>writeFileSync(path,JSON.stringify(state),{mode:0o600});
-async function marker(marker){
- console.log(JSON.stringify({marker}));
+async function marker(marker,extra={}){
+ console.log(JSON.stringify({marker,...extra}));
  let timer;
  const next=await Promise.race([commands.next(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned fault instruction deadline exceeded')),160000);})]).finally(()=>clearTimeout(timer));
- if(next.done||JSON.parse(next.value).instruction!==marker)throw Error('Wrong owned fault instruction');
+ if(next.done)throw Error('Wrong owned fault instruction');
+ const reply=JSON.parse(next.value);if(reply.instruction!==marker)throw Error('Wrong owned fault instruction');return reply;
 }
 function token(role='owner',org='org_lifecycle_acceptance'){
  const now=Math.floor(Date.now()/1000),header=Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
@@ -33,7 +34,13 @@ async function api(path,method='GET',body,role='owner',org='org_lifecycle_accept
  return {status:response.status,data:await response.json().catch(()=>null)};
 }
 const lifecycle=()=>`/v1/projects/${state.project.id}/branches/main/lifecycle`;
-async function record(){const r=await api(lifecycle());if(r.status!==200||!r.data)throw Error('Scoped lifecycle status unavailable');return r.data;}
+let observedState;
+async function record(){
+ const r=await api(lifecycle());if(r.status!==200||!r.data)throw Error('Scoped lifecycle status unavailable');
+ const selected=Object.fromEntries(['generation','phase','lastDemand','changedAt','phaseSince','starts','idleSeconds','enabled','failure','stopRequested'].map(k=>[k,r.data[k]]));
+ const key=JSON.stringify(selected);if(key!==observedState){observedState=key;report('scoped lifecycle state observed',{state:selected});}
+ return r.data;
+}
 async function configure(enabled=true,idleSeconds=60){const r=await api(lifecycle(),'POST',{enabled,idleSeconds});check(r.status===200&&r.data.enabled===enabled&&r.data.idleSeconds===idleSeconds,'owner configures exact allowed lifecycle policy');return r.data;}
 async function lease(){
  const r=await api(`/v1/projects/${state.project.id}/branches/main/connection`);
@@ -62,11 +69,30 @@ async function verify(c){
  check(nearest.id===1,'indexed vector query returns expected nearest neighbor');
 }
 async function waitPhase(wanted,seconds=150){
- const until=Date.now()+seconds*1000;
- while(Date.now()<until){
+ const until=Date.now()+seconds*1000;let proof,nextProbe=0;
+ while(Date.now()<(proof?proof.observedAt+35000:until)){
   const r=await record();
-  if(r.phase===wanted)return r;
+  if(Date.now()>(proof?proof.observedAt+35000:until))throw Error('Lifecycle status response exceeded applicable deadline');
+  if(r.phase===wanted){
+   if(proof){
+    check(Date.now()<=proof.observedAt+35000,'durable sleep is observed within one reconciliation tick');
+    for(const k of ['endpointId','projectId','timelineId','enabled','idleSeconds','lastDemand','starts'])check(r[k]===proof.record[k],'sleep reconciliation preserves binding policy activity and startup count');
+    check(!r.failure&&r.stopRequested,'reconciled sleep remains acknowledged without failure');
+    await marker('confirm-sleep-reconciled',{observedAt:Date.now()});
+   }
+   return r;
+  }
   if(r.phase==='failed'&&wanted!=='failed')throw Error('Unexpected durable lifecycle failure');
+  if(proof&&r.phase!=='stopping')throw Error('Unexpected state after proven process exit');
+  const age=Date.now()-r.phaseSince*1000;
+  if(!proof&&wanted==='sleeping'&&r.phase==='stopping'&&r.stopRequested&&!r.failure&&age>=0&&age<=35000&&Date.now()>=nextProbe){
+   const observed=await marker('inspect-stopping-exit',{deadline:until});
+   if(observed.exited){
+    check(observed.observedAt<=until,'physical shutdown is proved within original acceptance deadline');
+    proof=observed;
+   }
+   nextProbe=Date.now()+5000;
+  }
   await delay(1500);
  }
  throw Error('Expected durable phase deadline exceeded');
@@ -111,6 +137,7 @@ try{
  check((await api(lifecycle())).data===null,'denied requests leave lifecycle enrollment unchanged');
  await lease();c=await connect();
  check((await c.query("SHOW max_prepared_transactions")).rows[0].max_prepared_transactions==='4','disposable compute supports actual prepared work');
+ check((await c.query("SHOW log_connections")).rows[0].log_connections==='on'&&(await c.query("SHOW log_disconnections")).rows[0].log_disconnections==='on','passive fixture session logging is enabled');
  await configure();
  if(process.env.BRIVEN_SLEEP_WAKE_RESTART_ONLY==='true'){
   phase='running-api-restart';const running=await record();await marker('restart-api');
