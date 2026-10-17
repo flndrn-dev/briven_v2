@@ -307,11 +307,21 @@ async fn reconcile(
     }
     if record.phase == Phase::Quarantined {
         loop {
-            let status = pageserver
+            let status = match pageserver
                 .http_client
                 .timeline_delete(shard, timeline)
                 .await
-                .map_err(engine)?;
+            {
+                // The existing pageserver reports an already-running async
+                // deletion as 409. It is pending, never completion or a new
+                // preflight refusal that could make the copy usable again.
+                Err(pageserver_client::mgmt_api::Error::ApiError(status, _))
+                    if status == reqwest::StatusCode::CONFLICT =>
+                {
+                    reqwest::StatusCode::ACCEPTED
+                }
+                result => result.map_err(engine)?,
+            };
             if status == reqwest::StatusCode::NOT_FOUND {
                 break;
             }
