@@ -2,6 +2,10 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {createHmac,randomBytes,createHash} from 'node:crypto';
 import {join} from 'node:path';
 import pg from 'pg';
+import {createInterface} from 'node:readline';
+const commands=createInterface({input:process.stdin});
+const instructions=commands[Symbol.asyncIterator]();
+async function instruction(wanted){const next=await instructions.next();if(next.done||JSON.parse(next.value).instruction!==wanted)throw Error('fixed fixture instruction required');}
 const root=process.env.BRIVEN_FIXTURE_ROOT;
 if(process.env.GITHUB_ACTIONS!=='true'||!root?.includes('/briven-durability-'))throw Error('Owned CI fixture required');
 const action=process.argv[2];
@@ -82,6 +86,10 @@ try{
   const parent=await remove(copy);
   check(parent.status===200&&parent.data.outcome==='blocked'&&parent.data.reason==='dependent_branch','parent removal refuses a live restored dependency before accepting intent');
   check((await api(`/v1/projects/${state.project.id}/branches`,'POST',copy.input)).status===200,'preflight parent refusal leaves its identity usable');
+  console.log(JSON.stringify({marker:'hide-owned-pidfiles'}));await instruction('pidfiles-hidden');
+  const orphan=await remove(restored);
+  console.log(JSON.stringify({marker:'restore-owned-pidfiles'}));await instruction('pidfiles-restored');
+  check(orphan.status===200&&orphan.data.outcome==='blocked'&&orphan.data.reason==='identity_unavailable','missing PID files cannot disguise live bound compute processes as stopped');
   const busy=await remove(restored);
   check(busy.status===200&&busy.data.outcome==='blocked'&&busy.data.reason==='active_connections','removal protects the actual open customer connection');
   check((await c.query('SELECT count(*)::int AS n FROM saved_records')).rows[0].n===43,'refused removal preserves the active session and branch data');
@@ -122,4 +130,4 @@ try{
  }
  report('saved-copy engine phase completed');
 }catch(error){console.log(JSON.stringify({check:'saved-copy engine assertion',result:'fail',phase:action,errorClass:error?.name,reason:/^[a-zA-Z0-9 ,;().-]{1,160}$/.test(error?.message||'')?error.message:'details suppressed'}));process.exitCode=1;}
-finally{await Promise.allSettled(clients.map(c=>c.end()));}
+finally{commands.close();await Promise.allSettled(clients.map(c=>c.end()));}

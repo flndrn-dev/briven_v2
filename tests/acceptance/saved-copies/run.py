@@ -28,6 +28,7 @@ class Acceptance(fixture.Acceptance):
         fixture.IMAGES['engine'] = (image, actual['Id'])
         super().__init__()
         self.summary.update(suite='saved-copy-removal', engineConfigId=actual['Id'])
+        self.pid_backups=[]
         overlay = self.root / 'candidate-compose.json'
         overlay.write_text(json.dumps({'services': {name: {'image': image} for name in ['engine', 'certificates']}}))
         self.compose += ['-f', str(overlay)]
@@ -61,7 +62,13 @@ class Acceptance(fixture.Acceptance):
                     raw, buffer = buffer.split(b'\n', 1)
                     record = json.loads(raw)
                     assert set(record) <= {'check', 'result', 'phase', 'errorClass', 'reason', 'marker'}
-                    if record.get('marker') == 'removal-dispatched':
+                    if record.get('marker') == 'hide-owned-pidfiles':
+                        self.hide_owned_pids()
+                        self.respond('pidfiles-hidden')
+                    elif record.get('marker') == 'restore-owned-pidfiles':
+                        self.restore_owned_pids()
+                        self.respond('pidfiles-restored')
+                    elif record.get('marker') == 'removal-dispatched':
                         self.interrupt_storage_cleanup()
                     else:
                         self.report(record.pop('check'), **record)
@@ -74,6 +81,27 @@ class Acceptance(fixture.Acceptance):
                 try: self.probe.wait(timeout=10)
                 except subprocess.TimeoutExpired: self.probe.kill(); self.probe.wait(timeout=5)
             self.probe = None
+
+    def hide_owned_pids(self):
+        state=self.state()
+        identity='ep-'+state['project']['id']+'-'+state['restores'][0]['name']
+        assert re.fullmatch('ep-[0-9a-f]{32}-rc-[0-9a-f]{24}',identity)
+        directory='/var/lib/briven/endpoints/'+identity
+        for name in ['pgdata/postmaster.pid','compute_ctl.pid']:
+            path=directory+'/'+name
+            pid=self.engine('head','-n','1',path).strip()
+            assert pid.isdigit() and int(pid)>1
+            argv=self.engine('cat','/proc/'+pid+'/cmdline').split('\0')
+            assert (name.startswith('pgdata/') and '-D' in argv and directory+'/pgdata' in argv) or ('--compute-id' in argv and identity in argv)
+            self.engine('test','!','-e',path+'.acceptance-backup')
+            self.engine('mv',path,path+'.acceptance-backup')
+            self.pid_backups.append(path)
+
+    def restore_owned_pids(self):
+        for path in self.pid_backups:
+            self.engine('test','!','-e',path)
+            self.engine('mv',path+'.acceptance-backup',path)
+        self.pid_backups=[]
 
     def interrupt_storage_cleanup(self):
         state = self.state()
@@ -173,6 +201,8 @@ done''')
         self.summary['passed'] = True
 
     def cleanup(self):
+        if self.pid_backups:
+            self.restore_owned_pids()
         super().cleanup()
         if self.started:
             self.cmd([*self.compose, 'down', '--volumes', '--remove-orphans'], timeout=180)

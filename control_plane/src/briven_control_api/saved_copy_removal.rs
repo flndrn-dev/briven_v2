@@ -165,6 +165,22 @@ async fn reconcile(
             .map_err(engine)?,
     );
     let plane = ComputeControlPlane::load(env.clone()).map_err(engine)?;
+    // The generic loader tolerates a concurrently vanished endpoint.json.
+    // Under this exclusive repository lock that is not an expected race: an
+    // unrecognized definition could hide a live compute and must block removal.
+    for entry in fs::read_dir(env.endpoints_path()).map_err(engine)? {
+        let entry = entry.map_err(engine)?;
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|id| plane.endpoints.contains_key(id))
+        {
+            return Err(ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "compute inventory is incomplete",
+            ));
+        }
+    }
     let candidates = plane
         .endpoints
         .values()
