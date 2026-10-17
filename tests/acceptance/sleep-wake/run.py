@@ -47,13 +47,16 @@ class Acceptance(fixture.Acceptance):
         fixture.ENGINE_SHA, fixture.ENGINE_IMAGE = SOURCE, IMAGE
         fixture.IMAGES['engine'] = (IMAGE, CONFIG)
         super().__init__(fixture_attempt=os.environ['GITHUB_RUN_ATTEMPT'] + '1' if os.environ.get('BRIVEN_SLEEP_WAKE_CANDIDATE') == 'true' else None)
-        self.summary.update(suite='database-sleep-wake', engineConfigId=CONFIG)
+        self.summary.update(suite='database-restart-diagnostic' if os.environ.get('BRIVEN_SLEEP_WAKE_RESTART_ONLY') == 'true' else 'database-sleep-wake', engineConfigId=CONFIG)
         self.shell_paused = False
         self.paused_postmaster = None
         self.hidden_pid = None
         self.draining_client = None
         self.orphan_controller = None
         self.orphan_backup = None
+        self.capacity_server = None
+        self.sleep_launches = None
+        self.binding_backup = None
         overlay = self.root / 'candidate-compose.json'
         overlay.write_text(json.dumps({'services': {name: {'image': IMAGE} for name in ['engine', 'certificates']}}))
         self.compose += ['-f', str(overlay)]
@@ -101,7 +104,29 @@ class Acceptance(fixture.Acceptance):
             result[name] = pid
         return result
 
-    def restart_api(self, barrier=False):
+    def census(self):
+        raw = self.engine('sh', '-c', 'n=0; for p in /proc/[0-9]*; do n=$((n+1)); test "$n" -le 16384 || exit 1; e=$(readlink "$p/exe" 2>/dev/null) || continue; case "$e" in /usr/local/bin/compute_ctl|/usr/local/v17/bin/postgres) printf "%s\\n" "${p##*/}";; esac; done')
+        matches = []
+        for pid in raw.splitlines():
+            assert pid.isdigit() and int(pid) > 1
+            result = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'cat', f'/proc/{pid}/cmdline'], check=False)
+            if result.returncode: continue
+            argv = [v for v in result.stdout.split('\0') if v]
+            if not argv: continue
+            kind = Path(argv[0]).name
+            directory = '/var/lib/briven/endpoints/' + self.endpoint() + '/pgdata'
+            bound = (kind == 'postgres' and ['-D', directory] in [argv[n:n+2] for n in range(len(argv)-1)]) or (kind == 'compute_ctl' and ['--compute-id', self.endpoint()] in [argv[n:n+2] for n in range(len(argv)-1)] and ['--pgdata', directory] in [argv[n:n+2] for n in range(len(argv)-1)])
+            if bound: matches.append({'kind': kind, 'pid': int(pid)})
+        return matches
+
+    def launches(self):
+        result = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'cat', RUNTIME + '/actual-start-invocations'], check=False)
+        if result.returncode: return 0
+        lines = result.stdout.splitlines()
+        assert all(value == self.endpoint() for value in lines)
+        return len(lines)
+
+    def restart_api(self, barrier=False, capacity=False, scheduler=True):
         row = self.row('engine')
         if not self.shell_paused:
             argv, _ = self.identity(1)
@@ -123,8 +148,8 @@ class Acceptance(fixture.Acceptance):
         self.mode('none')
         self.cmd(['docker', 'exec', '-d', row['Id'], 'sh', '-c',
                   'exec env LD_LIBRARY_PATH=/usr/local/v16/lib BRIVEN_LOCAL_BIN=/tmp/lifecycle-cli.sh '
-                  'BRIVEN_COMPUTE_LIFECYCLE_ENABLED=true BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON="$1" '
-                  'briven_control_api >/tmp/lifecycle-api.log 2>&1', 'briven-owned-api', json.dumps([self.endpoint()])])
+                  'BRIVEN_COMPUTE_LIFECYCLE_ENABLED="$3" BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON="$1" '
+                  'BRIVEN_COMPUTE_RESOURCE_SOCKET="$2" briven_control_api >/tmp/lifecycle-api.log 2>&1', 'briven-owned-api', json.dumps([self.endpoint()]), '/run/briven-compute-control/control.sock' if capacity else '', 'true' if scheduler else 'false'])
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             result = self.cmd(['docker', 'exec', row['Id'], 'curl', '-fsS', '--max-time', '1', 'http://127.0.0.1:8787/healthz'], check=False)
@@ -199,14 +224,68 @@ class Acceptance(fixture.Acceptance):
             self.restart_api()
             assert self.processes() == before, 'API restart changed compute identities'
         elif marker == 'inspect-sleep':
-            assert all(value is None for value in self.processes().values()), 'Sleeping endpoint retains a process'
+            assert not self.census(), 'Sleeping endpoint retains a bound process'
+            self.sleep_launches = self.launches()
             self.report('sleeping endpoint has no bound PostgreSQL or compute controller', result='pass')
         elif marker == 'inspect-running':
-            assert all(value is not None for value in self.processes().values())
+            census = self.census()
+            assert len(census) == 2 and {v['kind'] for v in census} == {'postgres', 'compute_ctl'}, 'Concurrent wake created duplicate processes'
+            assert self.sleep_launches is not None and self.launches() == self.sleep_launches + 1, 'Concurrent wake invoked actual CLI start more than once'
+            self.report('independent process census and real CLI invocation count prove one cold startup', result='pass')
+        elif marker == 'enable-capacity-refusal':
+            assert self.record()['phase'] == 'sleeping' and not self.census()
+            host_pid = self.row('engine')['State']['Pid']; assert host_pid > 1
+            self.capacity_server = subprocess.Popen(['sudo', '--preserve-env=GITHUB_ACTIONS,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT', sys.executable, '-B', str(HERE / 'capacity-refusal.py'), str(host_pid), self.state()['project']['id'], self.row('engine')['Name'].lstrip('/'), CONFIG], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            selector = selectors.DefaultSelector(); selector.register(self.capacity_server.stdout, selectors.EVENT_READ)
+            try:
+                assert selector.select(10), 'Owned capacity refusal fixture startup deadline exceeded'
+                assert self.capacity_server.stdout.readline().decode().strip() == 'owned-capacity-refusal-ready'
+            finally: selector.close()
+            self.restart_api(capacity=True)
+            self.sleep_launches = self.launches()
+        elif marker == 'disable-capacity-refusal':
+            assert not self.census() and self.launches() == self.sleep_launches, 'Capacity refusal allocated a process'
+            self.restart_api()
+            self.capacity_server.stdin.close(); assert self.capacity_server.wait(timeout=10) == 0
+            self.capacity_server = None
+        elif marker == 'tamper-binding':
+            self.restart_api(scheduler=False)
+            self.binding_backup = self.record()
+            altered = dict(self.binding_backup, timelineId='f' * 32)
+            body = json.dumps(altered).replace("'", "''")
+            sql = "UPDATE briven_compute_lifecycle.endpoints SET timeline_id='" + 'f' * 32 + "',record='" + body + "' WHERE endpoint_id='" + endpoint + "'"
+            self.cmd(['docker', 'exec', self.row('catalog')['Id'], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'briven_catalog', '-d', 'briven_control', '-c', sql])
+        elif marker == 'restore-binding':
+            assert self.record() == dict(self.binding_backup, timelineId='f' * 32), 'Refused binding mutation changed durable state'
+            body = json.dumps(self.binding_backup).replace("'", "''")
+            sql = "UPDATE briven_compute_lifecycle.endpoints SET timeline_id='" + self.binding_backup['timelineId'] + "',record='" + body + "' WHERE endpoint_id='" + endpoint + "'"
+            self.cmd(['docker', 'exec', self.row('catalog')['Id'], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'briven_catalog', '-d', 'briven_control', '-c', sql])
+            self.binding_backup = None
+            self.restart_api()
+        elif marker == 'catalog-cas':
+            sql = """BEGIN;
+DO $check$ DECLARE original bigint; changed bigint;
+BEGIN
+ SELECT generation INTO original FROM briven_compute_lifecycle.endpoints WHERE endpoint_id='%s' FOR UPDATE;
+ UPDATE briven_compute_lifecycle.endpoints SET generation=original+1,record=jsonb_set(record::jsonb,'{generation}',to_jsonb(original+1))::text WHERE endpoint_id='%s' AND generation=original;
+ GET DIAGNOSTICS changed=ROW_COUNT; IF changed<>1 THEN RAISE EXCEPTION 'first claim failed'; END IF;
+ UPDATE briven_compute_lifecycle.endpoints SET generation=original+1 WHERE endpoint_id='%s' AND generation=original;
+ GET DIAGNOSTICS changed=ROW_COUNT; IF changed<>0 THEN RAISE EXCEPTION 'stale claim succeeded'; END IF;
+END $check$;
+ROLLBACK;""" % (endpoint, endpoint, endpoint)
+            self.cmd(['docker', 'exec', self.row('catalog')['Id'], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'briven_catalog', '-d', 'briven_control', '-c', sql])
+            self.report('actual isolated catalog permits one generation claimant and refuses its stale replay', result='pass')
         elif marker == 'arm-orphan-controller':
             self.orphan_controller = self.processes()['controller']
             assert self.orphan_controller
-            self.signal(self.orphan_controller, 'STOP')
+            conf = json.loads(self.engine('cat', f'/var/lib/briven/endpoints/{endpoint}/endpoint.json'))
+            for attempt in range(5):
+                self.signal(self.orphan_controller, 'STOP')
+                sql = "SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid()"
+                count = self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v17/lib', '/usr/local/v17/bin/psql', '-XAtw', '-h', '127.0.0.1', '-p', str(conf['pg_port']), '-U', 'cloud_admin', '-d', 'postgres', '-c', sql).strip()
+                if count == '0': break
+                self.signal(self.orphan_controller, 'CONT'); time.sleep(1)
+            assert count == '0', 'Owned controller must be paused between ephemeral monitor connections'
         elif marker == 'hide-orphan-controller':
             assert self.processes()['postgres'] is None and self.processes()['controller'] == self.orphan_controller
             path = f'/var/lib/briven/endpoints/{endpoint}/compute_ctl.pid'
@@ -261,6 +340,7 @@ class Acceptance(fixture.Acceptance):
                 if all(value is None for value in self.processes().values()): break
                 time.sleep(0.25)
             assert all(value is None for value in self.processes().values())
+            assert not self.census(), 'Reviewed start refuses an orphan or duplicate process'
             self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v16/lib', 'briven_local', 'endpoint', 'start', endpoint, '--allow-multiple', timeout=150)
         elif marker == 'hide-controller-identity':
             path = f'/var/lib/briven/endpoints/{endpoint}/compute_ctl.pid'
@@ -323,37 +403,76 @@ class Acceptance(fixture.Acceptance):
         self.summary['passed'] = True
 
     def cleanup(self):
-        if self.draining_client and self.draining_client.poll() is None:
-            self.draining_client.stdin.close()
-            try: self.draining_client.wait(timeout=10)
-            except subprocess.TimeoutExpired: self.draining_client.kill(); self.draining_client.wait(timeout=5)
-            self.draining_client = None
-        if self.started:
-            row = self.row('engine')
-            if row['State']['Running']:
-                if self.orphan_controller:
-                    argv, _ = self.identity(self.orphan_controller)
-                    assert Path(argv[0]).name == 'compute_ctl' and self.endpoint() in argv
-                    self.signal(self.orphan_controller, 'CONT'); self.orphan_controller = None
-                if self.paused_postmaster:
-                    self.signal(self.paused_postmaster, 'CONT'); self.paused_postmaster = None
-                if self.hidden_pid:
-                    self.engine('mv', self.hidden_pid + '.acceptance-backup', self.hidden_pid); self.hidden_pid = None
-                if self.shell_paused:
-                    self.cmd(['docker', 'kill', '--signal', 'CONT', row['Id']]); self.shell_paused = False
-            super().cleanup()
-            self.cmd([*self.compose, 'down', '--volumes', '--remove-orphans'], timeout=180)
-            assert not self.cmd(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + self.project]).strip()
-            assert not self.cmd(['docker', 'volume', 'ls', '-q', '--filter', 'label=com.docker.compose.project=' + self.project]).strip()
-            assert not self.cmd(['docker', 'network', 'ls', '-q', '--filter', 'label=com.docker.compose.project=' + self.project]).strip()
-        for path in self.root.glob('*private*'): path.unlink()
-        assert not list(self.root.glob('*private*'))
+        errors = []
+        def attempt(action):
+            try: action()
+            except Exception as error: errors.append(type(error).__name__)
+        def close_drain():
+            if self.draining_client and self.draining_client.poll() is None:
+                self.draining_client.stdin.close()
+                try: self.draining_client.wait(timeout=10)
+                except subprocess.TimeoutExpired: self.draining_client.kill(); self.draining_client.wait(timeout=5)
+        def close_capacity():
+            if self.capacity_server and self.capacity_server.poll() is None:
+                self.capacity_server.stdin.close()
+                assert self.capacity_server.wait(timeout=10) == 0
+        def restore_processes():
+            result = self.cmd(['docker', 'inspect', self.project + '-engine-1'], check=False)
+            if result.returncode: return
+            row = json.loads(result.stdout)[0]; fixture.guard_container(row, self.project, 'engine')
+            if not row['State']['Running']: return
+            if self.orphan_controller:
+                argv, _ = self.identity(self.orphan_controller)
+                assert Path(argv[0]).name == 'compute_ctl' and self.endpoint() in argv
+                self.signal(self.orphan_controller, 'CONT')
+            if self.paused_postmaster: self.signal(self.paused_postmaster, 'CONT')
+            if self.hidden_pid: self.engine('mv', self.hidden_pid + '.acceptance-backup', self.hidden_pid)
+            if self.shell_paused: self.cmd(['docker', 'kill', '--signal', 'CONT', row['Id']])
+        def remove_namespace():
+            identities = self.cmd(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + self.project]).split()
+            for identity in identities:
+                row = json.loads(self.cmd(['docker', 'inspect', identity]))[0]
+                fixture.guard_container(row, self.project, row['Config']['Labels']['com.docker.compose.service'])
+            self.cmd([*self.compose, 'down', '--timeout', '60', '--volumes', '--remove-orphans'], timeout=180)
+            for kind, flag in [('ps', '-aq'), ('volume', 'ls'), ('network', 'ls')]:
+                args = ['docker', kind, flag] + ([] if kind == 'ps' else ['-q'])
+                assert not self.cmd([*args, '--filter', 'label=com.docker.compose.project=' + self.project]).strip()
+        try:
+            attempt(close_drain)
+            attempt(close_capacity)
+            if self.started:
+                attempt(restore_processes)
+                attempt(remove_namespace)
+            def preserve_baseline():
+                current = self.cmd(['docker', 'ps', '-q']).split()
+                assert all(identity in current for identity in self.baseline)
+            attempt(preserve_baseline)
+        finally:
+            for path in self.root.glob('*private*'): attempt(path.unlink)
+            if list(self.root.glob('*private*')): errors.append('PrivateFileCleanupIncomplete')
+        self.summary['cleanupPassed'] = not errors
+        if errors:
+            self.report('independent fixture cleanup attempts completed with errors', result='fail', errorClasses=errors)
+            raise AssertionError('Owned fixture cleanup incomplete')
         self.report('owned fixture processes containers volumes networks and private files removed', result='pass')
-        self.summary['cleanupPassed'] = True
 
     def diagnose(self):
         row = self.row('engine')
         self.report('owned engine terminal state', running=row['State']['Running'], exitCode=row['State']['ExitCode'], oomKilled=row['State'].get('OOMKilled'), finishedAt=row['State'].get('FinishedAt'))
+        if row['State']['Running'] and (self.root / 'lifecycle-private.json').exists():
+            try:
+                record = self.record()
+                self.report('owned lifecycle timeout state', record=record, census=self.census(), now=int(time.time()))
+                api = self.engine('cat', '/var/lib/briven/briven-control-api.pid').strip()
+                values = self.engine('cat', '/proc/' + api + '/environ').split('\0')
+                selected = dict(v.split('=', 1) for v in values if v.startswith(('BRIVEN_COMPUTE_LIFECYCLE_ENABLED=', 'BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON=', 'BRIVEN_COMPUTE_RESOURCE_SOCKET=')))
+                self.report('owned actual API lifecycle flags', flags=selected)
+                definition = json.loads(self.engine('cat', '/var/lib/briven/endpoints/' + self.endpoint() + '/endpoint.json'))
+                sql = "SELECT json_build_object('clients',count(*) FILTER(WHERE backend_type='client backend' AND pid<>pg_backend_pid()),'prepared',(SELECT count(*) FROM pg_prepared_xacts),'monitor',count(*) FILTER(WHERE application_name='compute_ctl:compute_monitor'),'inspection',count(*) FILTER(WHERE application_name='briven_lifecycle_inspection' AND pid<>pg_backend_pid()),'customer',count(*) FILTER(WHERE usename='briven_" + self.state()['project']['id'] + "'),'admin',count(*) FILTER(WHERE usename='cloud_admin' AND pid<>pg_backend_pid())) FROM pg_stat_activity"
+                activity = json.loads(self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v17/lib', '/usr/local/v17/bin/psql', '-XAtw', '-h', '127.0.0.1', '-p', str(definition['pg_port']), '-U', 'cloud_admin', '-d', 'postgres', '-c', sql))
+                self.report('owned lifecycle timeout actual backend counts', activity=activity)
+            except Exception as error:
+                self.report('owned lifecycle diagnostic unavailable', errorClass=type(error).__name__)
         super().diagnose()
 
 

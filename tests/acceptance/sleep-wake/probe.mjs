@@ -112,6 +112,13 @@ try{
  await lease();c=await connect();
  check((await c.query("SHOW max_prepared_transactions")).rows[0].max_prepared_transactions==='4','disposable compute supports actual prepared work');
  await configure();
+ if(process.env.BRIVEN_SLEEP_WAKE_RESTART_ONLY==='true'){
+  phase='running-api-restart';const running=await record();await marker('restart-api');
+  check((await record()).starts===running.starts,'running API restart does not duplicate compute startup');await verify(c);await close(c);
+  phase='sleeping-api-restart';const asleep=await waitPhase('sleeping');await marker('restart-api');
+  check((await record()).phase==='sleeping'&&(await record()).starts===asleep.starts,'sleeping API restart retains durable sleep without automatic wake');await coldWake(asleep);
+  await configure(false);report('diagnostic API restart checks passed');
+ }else{
  phase='missing-controller-pid';await close(c);await marker('arm-orphan-controller');await waitPhase('stopping');await delay(2000);await marker('hide-orphan-controller');
  try{
   const protectedDemand=await api(`/v1/projects/${state.project.id}/branches/main/connection`);
@@ -119,6 +126,21 @@ try{
   check((await record()).starts===0,'unproven controller exit allocates no replacement process');
  }finally{await marker('restore-orphan-controller');}
  const orphanSleep=await waitPhase('sleeping');await coldWake(orphanSleep);await lease();c=await connect();await configure();
+ phase='duplicate-and-stale-configuration';
+ const duplicateBefore=await record();
+ const duplicate=await Promise.all(Array.from({length:8},()=>api(lifecycle(),'POST',{enabled:true,idleSeconds:60})));
+ check(duplicate.every(r=>r.status===200&&r.data.starts===duplicateBefore.starts)&&new Set(duplicate.map(r=>r.data.generation)).size===8,'concurrent duplicate enrollment writes serialize without duplicate compute start');
+ const staleBefore=await record();
+ check((await api(lifecycle(),'POST',{enabled:true,idleSeconds:60,generation:duplicateBefore.generation})).status===422,'caller supplied stale generation cannot mutate lifecycle state');
+ check(JSON.stringify(await record())===JSON.stringify(staleBefore),'rejected stale generation leaves durable state exact');
+ await marker('catalog-cas');
+ phase='actual-binding-mismatch';await marker('tamper-binding');
+ try{
+  check((await api(lifecycle())).status===503,'real stored timeline mismatch refuses lifecycle status');
+  check((await api(`/v1/projects/${state.project.id}/branches/main/connection`)).status===503,'real stored timeline mismatch refuses demand');
+  check((await api(lifecycle(),'POST',{enabled:true,idleSeconds:60})).status===404,'disabled acceptance scheduler admits no configuration mutation during binding fault');
+ }finally{await marker('restore-binding');}
+ await verify(c);
  phase='transaction-protection';await c.query('BEGIN');await c.query('SELECT 1');await protectedFor(75,'open transaction survives beyond idle window');await c.query('COMMIT');
  phase='idle-session-protection';await c.query("SET application_name='briven_lifecycle_inspection'");await protectedFor(75,'idle client with inspection-like name remains protected');await verify(c);
  phase='prepared-work-protection';await c.query('BEGIN');await c.query("INSERT INTO lifecycle_records VALUES(99,'prepared only','[9,9,1]')");await c.query("PREPARE TRANSACTION 'briven_lifecycle_acceptance'");await close(c);
@@ -136,6 +158,14 @@ try{
   await coldWake(asleep);
  }
  report('three actual idle sleep and eight-connection TLS wake cycles passed',{cycles:3});
+
+ phase='capacity-refusal';await lease();const capacitySleep=await waitPhase('sleeping');await marker('enable-capacity-refusal');
+ try{
+  const capacityBefore=await record();
+  check((await api(`/v1/projects/${state.project.id}/branches/main/connection`)).status===503,'real resource admission refusal rejects lifecycle demand before allocation');
+  check(JSON.stringify(await record())===JSON.stringify(capacityBefore),'capacity refusal leaves phase generation and startup count exact');
+ }finally{await marker('disable-capacity-refusal');}
+ await coldWake(capacitySleep);
 
  phase='running-api-restart';await lease();c=await connect();const running=await record();await marker('restart-api');
  check((await record()).starts===running.starts,'running API restart does not duplicate compute startup');await verify(c);await close(c);
@@ -186,6 +216,7 @@ try{
  await protectedFor(75,'disabled policy remains awake beyond idle window');
  await lease();c=await connect();await verify(c);await close(c);
  report('all required immutable engine lifecycle phases passed',{checksum:state.golden,starts:(await record()).starts});
+ }
 }catch(error){
  console.log(JSON.stringify({check:'actual lifecycle assertion',result:'fail',phase,errorClass:error?.name,sqlstate:/^[A-Z0-9]{5}$/.test(error?.code||'')?error.code:undefined,reason:/^[a-zA-Z0-9 ,;().-]{1,180}$/.test(error?.message||'')?error.message:'details suppressed'}));process.exitCode=1;
 }finally{

@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
+from unittest.mock import Mock
 
 spec = importlib.util.spec_from_file_location('sleep_wake', Path(__file__).with_name('run.py'))
 module = importlib.util.module_from_spec(spec)
@@ -25,6 +27,35 @@ class LifecycleFaultGuards(unittest.TestCase):
         self.assertEqual(module.BARRIERS, {'before-stop', 'after-stop', 'before-start', 'after-start'})
         self.assertEqual(module.SIGNALS, {'STOP', 'CONT', 'KILL'})
         self.assertNotIn('TERM', module.SIGNALS)
+
+    def test_private_files_are_removed_even_when_inventory_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proof = module.Acceptance.__new__(module.Acceptance)
+            proof.root = Path(temporary); proof.started = False; proof.baseline = []
+            proof.draining_client = proof.capacity_server = None
+            proof.summary = {}; proof.report = Mock()
+            proof.cmd = Mock(side_effect=RuntimeError('unavailable'))
+            secret = proof.root / 'client-private.json'; secret.write_text('owned disposable credential')
+            with self.assertRaises(AssertionError): proof.cleanup()
+            self.assertFalse(secret.exists())
+            self.assertFalse(proof.summary['cleanupPassed'])
+
+    def test_missing_engine_does_not_bypass_owned_namespace_teardown(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proof = module.Acceptance.__new__(module.Acceptance)
+            proof.root = Path(temporary); proof.started = True; proof.baseline = []
+            proof.project = 'briven-durability-123-1'; proof.compose = ['docker', 'compose', '-p', proof.project]
+            proof.draining_client = proof.capacity_server = None
+            proof.summary = {}; proof.report = Mock(); calls = []
+            def command(args, **kwargs):
+                calls.append(args)
+                if args[:2] == ['docker', 'inspect']:
+                    return type('Missing', (), {'returncode': 1})()
+                return ''
+            proof.cmd = command
+            proof.cleanup()
+            self.assertTrue(any('down' in call and '--volumes' in call for call in calls))
+            self.assertTrue(proof.summary['cleanupPassed'])
 
 
 if __name__ == '__main__':

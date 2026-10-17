@@ -28,6 +28,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Real scheduler restart transition and TLS acceptance
+        env:
+          BRIVEN_SLEEP_WAKE_RESTART_ONLY: ${{ endsWith(github.ref_name, '-restart-check') && 'true' || 'false' }}
         run: python3 -B tests/acceptance/sleep-wake/run.py
       - name: Preserve redacted acceptance and cleanup evidence
         if: always()

@@ -25,5 +25,6 @@ hold() {
 }
 case "${2:-}:$mode" in stop:after-stop) hold prepare-after-stop ;; esac
 case "${2:-}:$mode" in stop:before-stop|start:before-start) hold "$mode" ;; esac
+case "${2:-}" in start) printf '%s\n' "$target" >> "$root/actual-start-invocations" ;; esac
 "$actual" "$@"
 case "${2:-}:$mode" in stop:after-stop|start:after-start) hold "$mode" ;; esac
