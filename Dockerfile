@@ -144,7 +144,8 @@ RUN  --mount=type=secret,uid=1000,id=SUBZERO_ACCESS_TOKEN \
 FROM build AS lifecycle-acceptance
 ARG GIT_VERSION
 ARG BRIVEN_ACCEPTANCE_RUN
-RUN /bin/bash tests/acceptance/sleep-wake/rust-postgres-acceptance.sh
+COPY --from=lifecycle-harness rust-postgres-acceptance.sh /tmp/briven-rust-postgres-acceptance.sh
+RUN /bin/bash /tmp/briven-rust-postgres-acceptance.sh
 
 # Assemble the final image
 FROM $BASE_IMAGE_SHA

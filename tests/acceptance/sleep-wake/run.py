@@ -37,9 +37,9 @@ class Acceptance(fixture.Acceptance):
         global SOURCE, IMAGE, CONFIG
         if os.environ.get('BRIVEN_SLEEP_WAKE_CANDIDATE') == 'true':
             assert os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux'
-            SOURCE = os.environ['GITHUB_SHA']
+            SOURCE = os.environ.get('BRIVEN_ACCEPTANCE_ENGINE_SOURCE', os.environ['GITHUB_SHA'])
             assert re.fullmatch('[0-9a-f]{40}', SOURCE)
-            IMAGE = 'local/briven-engine-acceptance:' + SOURCE
+            IMAGE = 'local/briven-engine-acceptance:' + os.environ['GITHUB_SHA']
             image = json.loads(subprocess.check_output(['docker', 'image', 'inspect', IMAGE], text=True))[0]
             assert image['Config']['Labels']['org.opencontainers.image.revision'] == SOURCE
             CONFIG = image['Id']
@@ -47,7 +47,7 @@ class Acceptance(fixture.Acceptance):
         fixture.ENGINE_SHA, fixture.ENGINE_IMAGE = SOURCE, IMAGE
         fixture.IMAGES['engine'] = (IMAGE, CONFIG)
         super().__init__(fixture_attempt=os.environ['GITHUB_RUN_ATTEMPT'] + '1' if os.environ.get('BRIVEN_SLEEP_WAKE_CANDIDATE') == 'true' else None)
-        self.summary.update(suite='database-restart-diagnostic' if os.environ.get('BRIVEN_SLEEP_WAKE_RESTART_ONLY') == 'true' else 'database-sleep-wake', engineConfigId=CONFIG)
+        self.summary.update(suite='database-restart-diagnostic' if os.environ.get('BRIVEN_SLEEP_WAKE_RESTART_ONLY') == 'true' else 'database-sleep-wake', engineConfigId=CONFIG, harnessSource=os.environ['GITHUB_SHA'])
         self.shell_paused = False
         self.paused_postmaster = None
         self.hidden_pid = None

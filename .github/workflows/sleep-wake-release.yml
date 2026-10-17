@@ -6,6 +6,8 @@ on:
 permissions:
   contents: read
   packages: write
+env:
+  BRIVEN_ACCEPTANCE_ENGINE_SOURCE: a6dc9da1959bf4f2a64f6ae2d90ad5800fc031de
 jobs:
   acceptance:
     runs-on: ubuntu-24.04
@@ -14,6 +16,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           submodules: true
+      - name: Verify unchanged application source and runtime recipe
+        run: |
+          git fetch --no-tags --depth=1 origin "$BRIVEN_ACCEPTANCE_ENGINE_SOURCE"
+          python3 -B tests/acceptance/sleep-wake/verify-source.py
       - name: Verify fixed guards and install locked SQL clients
         run: |
           python3 -B -m unittest discover -s tests/acceptance/postgres-durability -p test_guards.py
@@ -45,13 +51,14 @@ jobs:
           provenance: false
           tags: local/briven-engine-acceptance:${{ github.sha }}
           labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ env.BRIVEN_ACCEPTANCE_ENGINE_SOURCE }}
             org.opencontainers.image.source=https://github.com/flndrn-dev/briven_v2
+            io.briven.acceptance.harness-revision=${{ github.sha }}
           build-args: |
             REPOSITORY=ghcr.io/neondatabase
             IMAGE=build-tools
             TAG=pinned
-            GIT_VERSION=${{ github.sha }}
+            GIT_VERSION=${{ env.BRIVEN_ACCEPTANCE_ENGINE_SOURCE }}
             DEBIAN_VERSION=bookworm
           cache-from: type=gha,scope=operations-engine
           cache-to: type=gha,scope=operations-engine,mode=max
@@ -61,6 +68,8 @@ jobs:
           context: .
           file: Dockerfile
           target: lifecycle-acceptance
+          build-contexts: |
+            lifecycle-harness=./tests/acceptance/sleep-wake
           platforms: linux/amd64
           load: false
           push: false
@@ -69,7 +78,7 @@ jobs:
             REPOSITORY=ghcr.io/neondatabase
             IMAGE=build-tools
             TAG=pinned
-            GIT_VERSION=${{ github.sha }}
+            GIT_VERSION=${{ env.BRIVEN_ACCEPTANCE_ENGINE_SOURCE }}
             DEBIAN_VERSION=bookworm
             BRIVEN_ACCEPTANCE_RUN=${{ github.run_id }}-${{ github.run_attempt }}
       - name: Preserve saved-copy removal and interrupted cleanup acceptance
@@ -93,7 +102,7 @@ jobs:
         run: python3 -B tests/acceptance/sleep-wake/run.py
       - name: Publish only the actual accepted image
         run: |
-          image="ghcr.io/flndrn-dev/briven-engine:sleep-wake-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          image="ghcr.io/flndrn-dev/briven-engine:sleep-wake-${BRIVEN_ACCEPTANCE_ENGINE_SOURCE}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker tag "local/briven-engine-acceptance:${GITHUB_SHA}" "$image"
           docker push "$image"
           docker image inspect "$image" --format '{{json .Id}}' > "$RUNNER_TEMP/accepted-engine-config.json"
@@ -108,5 +117,6 @@ jobs:
             ${{ runner.temp }}/briven-durability-*/summary.json
             ${{ runner.temp }}/accepted-engine-config.json
             ${{ runner.temp }}/accepted-engine-image.txt
+            ${{ runner.temp }}/sleep-wake-source-proof.json
           if-no-files-found: error
           retention-days: 30

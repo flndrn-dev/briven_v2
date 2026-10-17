@@ -17,9 +17,9 @@ spec.loader.exec_module(fixture)
 class Acceptance(fixture.Acceptance):
     def __init__(self):
         assert os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux'
-        source = os.environ['GITHUB_SHA']
+        source = os.environ.get('BRIVEN_ACCEPTANCE_ENGINE_SOURCE', os.environ['GITHUB_SHA'])
         assert re.fullmatch('[0-9a-f]{40}', source)
-        image = 'local/briven-engine-acceptance:' + source
+        image = 'local/briven-engine-acceptance:' + os.environ['GITHUB_SHA']
         actual = json.loads(subprocess.check_output(['docker', 'image', 'inspect', image], text=True))[0]
         assert actual['Config']['Labels']['org.opencontainers.image.revision'] == source
         assert re.fullmatch('sha256:[0-9a-f]{64}', actual['Id'])
@@ -27,7 +27,7 @@ class Acceptance(fixture.Acceptance):
         fixture.ENGINE_IMAGE = image
         fixture.IMAGES['engine'] = (image, actual['Id'])
         super().__init__()
-        self.summary.update(suite='saved-copy-removal', engineConfigId=actual['Id'])
+        self.summary.update(suite='saved-copy-removal', engineConfigId=actual['Id'], harnessSource=os.environ['GITHUB_SHA'])
         self.pid_backups=[]
         overlay = self.root / 'candidate-compose.json'
         overlay.write_text(json.dumps({'services': {name: {'image': image} for name in ['engine', 'certificates']}}))
