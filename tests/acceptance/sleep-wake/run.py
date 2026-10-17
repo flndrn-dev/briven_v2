@@ -42,6 +42,8 @@ class Acceptance(fixture.Acceptance):
         self.paused_postmaster = None
         self.hidden_pid = None
         self.draining_client = None
+        self.orphan_controller = None
+        self.orphan_backup = None
         overlay = self.root / 'candidate-compose.json'
         overlay.write_text(json.dumps({'services': {name: {'image': IMAGE} for name in ['engine', 'certificates']}}))
         self.compose += ['-f', str(overlay)]
@@ -191,6 +193,23 @@ class Acceptance(fixture.Acceptance):
             self.report('sleeping endpoint has no bound PostgreSQL or compute controller', result='pass')
         elif marker == 'inspect-running':
             assert all(value is not None for value in self.processes().values())
+        elif marker == 'arm-orphan-controller':
+            self.orphan_controller = self.processes()['controller']
+            assert self.orphan_controller
+            self.signal(self.orphan_controller, 'STOP')
+        elif marker == 'hide-orphan-controller':
+            assert self.processes()['postgres'] is None and self.processes()['controller'] == self.orphan_controller
+            path = f'/var/lib/briven/endpoints/{endpoint}/compute_ctl.pid'
+            self.engine('mv', path, path + '.orphan-backup'); self.orphan_backup = path
+            self.report('actual stopped PostgreSQL has a live paused controller with missing PID file', result='pass')
+        elif marker == 'restore-orphan-controller':
+            path = self.orphan_backup
+            exists = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'test', '-e', path], check=False)
+            if exists.returncode: self.engine('mv', path + '.orphan-backup', path)
+            self.orphan_backup = None
+            argv, _ = self.identity(self.orphan_controller)
+            assert Path(argv[0]).name == 'compute_ctl' and endpoint in argv
+            self.signal(self.orphan_controller, 'CONT'); self.orphan_controller = None
         elif marker == 'pause-postmaster':
             self.paused_postmaster = self.processes()['postgres']
             assert self.paused_postmaster
@@ -301,6 +320,10 @@ class Acceptance(fixture.Acceptance):
         if self.started:
             row = self.row('engine')
             if row['State']['Running']:
+                if self.orphan_controller:
+                    argv, _ = self.identity(self.orphan_controller)
+                    assert Path(argv[0]).name == 'compute_ctl' and self.endpoint() in argv
+                    self.signal(self.orphan_controller, 'CONT'); self.orphan_controller = None
                 if self.paused_postmaster:
                     self.signal(self.paused_postmaster, 'CONT'); self.paused_postmaster = None
                 if self.hidden_pid:

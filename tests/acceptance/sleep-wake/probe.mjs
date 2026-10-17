@@ -112,6 +112,13 @@ try{
  await lease();c=await connect();
  check((await c.query("SHOW max_prepared_transactions")).rows[0].max_prepared_transactions==='4','disposable compute supports actual prepared work');
  await configure();
+ phase='missing-controller-pid';await close(c);await marker('arm-orphan-controller');await waitPhase('stopping');await delay(2000);await marker('hide-orphan-controller');
+ try{
+  const protectedDemand=await api(`/v1/projects/${state.project.id}/branches/main/connection`);
+  check(protectedDemand.status===503,'live orphan controller with missing PID file blocks destructive wake');
+  check((await record()).starts===0,'unproven controller exit allocates no replacement process');
+ }finally{await marker('restore-orphan-controller');}
+ const orphanSleep=await waitPhase('sleeping');await coldWake(orphanSleep);await lease();c=await connect();await configure();
  phase='transaction-protection';await c.query('BEGIN');await c.query('SELECT 1');await protectedFor(75,'open transaction survives beyond idle window');await c.query('COMMIT');
  phase='idle-session-protection';await c.query("SET application_name='briven_lifecycle_inspection'");await protectedFor(75,'idle client with inspection-like name remains protected');await verify(c);
  phase='prepared-work-protection';await c.query('BEGIN');await c.query("INSERT INTO lifecycle_records VALUES(99,'prepared only','[9,9,1]')");await c.query("PREPARE TRANSACTION 'briven_lifecycle_acceptance'");await close(c);
