@@ -586,10 +586,6 @@ async fn create_branch(
     if mapped.is_some() && mapped != input.timeline_id {
         return Err(ApiError(StatusCode::CONFLICT, "branch name already exists"));
     }
-    let parent = input.parent.as_deref().unwrap_or("main");
-    if env.get_branch_timeline_id(parent, tenant_id).is_none() {
-        return Err(ApiError(StatusCode::NOT_FOUND, "parent branch not found"));
-    }
     // The broker persists this ID before dispatch. Reissuing the same storage
     // request repairs a lost local mapping and uses storage's parameter-bound
     // idempotency after a crash between timeline creation and registration.
@@ -604,11 +600,16 @@ async fn create_branch(
         &timeline_id,
     )
     .map_err(|_| ApiError(StatusCode::CONFLICT, "branch removal has started"))?;
+    // A removed identity stays a conflict even after its parent is removed.
+    // Resolve the parent only after checking the target's durable fence.
+    let parent = input.parent.as_deref().unwrap_or("main");
+    let parent_timeline = env
+        .get_branch_timeline_id(parent, tenant_id)
+        .ok_or(ApiError(StatusCode::NOT_FOUND, "parent branch not found"))?;
     control_plane::reserved_branch_removal::ensure_timeline_available(
         &env,
         tenant_id,
-        env.get_branch_timeline_id(parent, tenant_id)
-            .expect("parent was found"),
+        parent_timeline,
     )
     .map_err(|_| ApiError(StatusCode::CONFLICT, "parent branch removal has started"))?;
     let command = input.command(&id, &timeline_id);
