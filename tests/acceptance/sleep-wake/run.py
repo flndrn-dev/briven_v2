@@ -94,7 +94,10 @@ class Acceptance(fixture.Acceptance):
         if not self.shell_paused:
             argv, _ = self.identity(1)
             assert argv == ['/bin/sh', '/start-private.sh'], 'Owned shell supervisor identity differs'
-            self.signal(1, 'STOP')
+            # Namespace init ignores unhandled STOP sent from inside its own
+            # namespace. Docker delivers it from the verified ancestor namespace.
+            self.cmd(['docker', 'kill', '--signal', 'STOP', row['Id']])
+            assert self.engine('cat', '/proc/1/stat').rsplit(') ', 1)[1].split()[0] in ('T', 't'), 'Owned supervisor did not actually stop'
             self.shell_paused = True
         pid = int(self.engine('cat', '/var/lib/briven/briven-control-api.pid').strip())
         guard_api(*self.identity(pid))
@@ -303,7 +306,7 @@ class Acceptance(fixture.Acceptance):
                 if self.hidden_pid:
                     self.engine('mv', self.hidden_pid + '.acceptance-backup', self.hidden_pid); self.hidden_pid = None
                 if self.shell_paused:
-                    self.signal(1, 'CONT'); self.shell_paused = False
+                    self.cmd(['docker', 'kill', '--signal', 'CONT', row['Id']]); self.shell_paused = False
             super().cleanup()
             self.cmd([*self.compose, 'down', '--volumes', '--remove-orphans'], timeout=180)
             assert not self.cmd(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + self.project]).strip()
@@ -313,6 +316,11 @@ class Acceptance(fixture.Acceptance):
         assert not list(self.root.glob('*private*'))
         self.report('owned fixture processes containers volumes networks and private files removed', result='pass')
         self.summary['cleanupPassed'] = True
+
+    def diagnose(self):
+        row = self.row('engine')
+        self.report('owned engine terminal state', running=row['State']['Running'], exitCode=row['State']['ExitCode'], oomKilled=row['State'].get('OOMKilled'), finishedAt=row['State'].get('FinishedAt'))
+        super().diagnose()
 
 
 def main():
