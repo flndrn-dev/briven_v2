@@ -169,6 +169,17 @@ done''')
         assert all(value == self.endpoint() for value in lines)
         return len(lines)
 
+    def activity_snapshot(self):
+        if not any(value['kind'] == 'postgres' for value in self.census()):
+            self.report('bounded classified backend snapshot', available=False, reason='compute-not-running')
+            return
+        definition = json.loads(self.engine('cat', '/var/lib/briven/endpoints/' + self.endpoint() + '/endpoint.json'))
+        assert str(definition['pg_port']).isdigit()
+        role = 'briven_' + self.endpoint()[3:]
+        sql = "WITH other AS (SELECT *,CASE WHEN usename='" + role + "' THEN 'customer' WHEN application_name='compute_ctl:compute_monitor' THEN 'monitor' WHEN application_name='briven_lifecycle_inspection' THEN 'inspection' ELSE 'other' END AS kind FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid()) SELECT json_build_object('clients',count(*),'prepared',(SELECT count(*) FROM pg_prepared_xacts),'monitor',count(*) FILTER(WHERE kind='monitor'),'inspection',count(*) FILTER(WHERE kind='inspection'),'customer',count(*) FILTER(WHERE kind='customer'),'other',count(*) FILTER(WHERE kind='other'),'active',count(*) FILTER(WHERE state='active'),'idleInTransaction',count(*) FILTER(WHERE state='idle in transaction'),'oldestBackendSeconds',coalesce(max(floor(extract(epoch FROM now()-backend_start))),0),'oldestStateSeconds',coalesce(max(floor(extract(epoch FROM now()-state_change))),0)) FROM other"
+        result = self.cmd(['docker', 'exec', self.row('engine')['Id'], 'env', 'LD_LIBRARY_PATH=/usr/local/v17/lib', 'PGCONNECT_TIMEOUT=3', 'PGOPTIONS=-c statement_timeout=3000', '/usr/local/v17/bin/psql', '-XAtw', '-h', '127.0.0.1', '-p', str(definition['pg_port']), '-U', 'cloud_admin', '-d', 'postgres', '-c', sql], check=False, timeout=10)
+        self.report('bounded classified backend snapshot', available=result.returncode == 0, activity=json.loads(result.stdout) if result.returncode == 0 else None)
+
     def restart_api(self, barrier=False, capacity=False, scheduler=True):
         row = self.row('engine')
         if not self.shell_paused:
@@ -354,6 +365,7 @@ done''')
             self.signal(self.paused_postmaster, 'STOP')
         elif marker == 'resume-postmaster':
             self.signal(self.paused_postmaster, 'CONT'); self.paused_postmaster = None
+            self.activity_snapshot()
         elif marker.startswith('arm-'):
             self.mode(marker[4:])
         elif marker.startswith('interrupt-'):
@@ -523,12 +535,10 @@ done''')
                 values = self.engine('cat', '/proc/' + api + '/environ').split('\0')
                 selected = dict(v.split('=', 1) for v in values if v.startswith(('BRIVEN_COMPUTE_LIFECYCLE_ENABLED=', 'BRIVEN_COMPUTE_LIFECYCLE_ENDPOINTS_JSON=', 'BRIVEN_COMPUTE_RESOURCE_SOCKET=')))
                 self.report('owned actual API lifecycle flags', flags=selected)
-                definition = json.loads(self.engine('cat', '/var/lib/briven/endpoints/' + self.endpoint() + '/endpoint.json'))
-                sql = "SELECT json_build_object('clients',count(*) FILTER(WHERE backend_type='client backend' AND pid<>pg_backend_pid()),'prepared',(SELECT count(*) FROM pg_prepared_xacts),'monitor',count(*) FILTER(WHERE application_name='compute_ctl:compute_monitor'),'inspection',count(*) FILTER(WHERE application_name='briven_lifecycle_inspection' AND pid<>pg_backend_pid()),'customer',count(*) FILTER(WHERE usename='briven_" + self.state()['project']['id'] + "'),'admin',count(*) FILTER(WHERE usename='cloud_admin' AND pid<>pg_backend_pid())) FROM pg_stat_activity"
-                activity = json.loads(self.engine('env', 'LD_LIBRARY_PATH=/usr/local/v17/lib', '/usr/local/v17/bin/psql', '-XAtw', '-h', '127.0.0.1', '-p', str(definition['pg_port']), '-U', 'cloud_admin', '-d', 'postgres', '-c', sql))
-                self.report('owned lifecycle timeout actual backend counts', activity=activity)
             except Exception as error:
                 self.report('owned lifecycle diagnostic unavailable', errorClass=type(error).__name__)
+            try: self.activity_snapshot()
+            except Exception as error: self.report('bounded backend snapshot unavailable', errorClass=type(error).__name__)
         super().diagnose()
 
 
