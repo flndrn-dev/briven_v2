@@ -140,6 +140,17 @@ class Acceptance(fixture.Acceptance):
         guard_api(*self.identity(pid))
         assert self.engine('readlink', f'/proc/{pid}/exe').strip() == '/usr/local/bin/briven_control_api'
         self.signal(pid, 'KILL')
+        # A delivered signal is not proof of exit. In particular, do not let an
+        # old health response and stale PID file satisfy replacement readiness.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            old = self.cmd(['docker', 'exec', row['Id'], 'cat', f'/proc/{pid}/stat'], check=False)
+            if old.returncode or old.stdout.rsplit(') ', 1)[1].split()[0] in ('Z', 'X'):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError('Owned old API did not exit before replacement')
+        assert self.cmd(['docker', 'exec', row['Id'], 'curl', '-fsS', '--max-time', '1', 'http://127.0.0.1:8787/healthz'], check=False).returncode != 0, 'An API still serves before replacement'
         if barrier:
             wrapper = int(self.engine('cat', RUNTIME + '/barrier-pid').strip())
             argv, _ = self.identity(wrapper)
@@ -155,9 +166,11 @@ class Acceptance(fixture.Acceptance):
             result = self.cmd(['docker', 'exec', row['Id'], 'curl', '-fsS', '--max-time', '1', 'http://127.0.0.1:8787/healthz'], check=False)
             if result.returncode == 0:
                 new = int(self.engine('cat', '/var/lib/briven/briven-control-api.pid').strip())
+                if new == pid:
+                    time.sleep(0.2)
+                    continue
                 guard_api(*self.identity(new))
                 assert self.engine('readlink', f'/proc/{new}/exe').strip() == '/usr/local/bin/briven_control_api'
-                assert new != pid
                 self.report('actual API binary restarted with retained catalog and single endpoint allowlist', result='pass')
                 return
             time.sleep(0.2)
@@ -476,7 +489,7 @@ def main():
         acceptance.summary['passed'] = False
         reason = str(error) if isinstance(error, AssertionError) and re.fullmatch('[a-zA-Z0-9 ,;-]{1,160}', str(error)) else 'details suppressed'
         frames = [frame for frame in traceback.extract_tb(error.__traceback__) if frame.filename == __file__]
-        acceptance.report('database sleep wake acceptance failed', result='fail', phase=acceptance.phase, errorClass=type(error).__name__, reason=reason, guardLine=frames[-1].lineno if frames else None)
+        acceptance.report('database sleep wake acceptance failed', result='fail', phase=acceptance.phase, errorClass=type(error).__name__, reason=reason, guardLine=frames[-1].lineno if frames else None, guardLines=[frame.lineno for frame in frames])
         try: acceptance.diagnose()
         except Exception: pass
     finally:
