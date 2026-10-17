@@ -35,7 +35,7 @@
 
 **Interfaces:** `Acceptance` subclasses the durability fixture, pins engine source/manifest/config from the spec, and overrides `execute`, `run_probe`, `cleanup`. `probe.mjs` communicates fixed JSON markers over stdout and waits for exact stdin acknowledgments. `cli-barrier.sh` delegates to the actual bundled CLI and holds only a named owned endpoint's start/stop boundary. Reports contain controlled labels/counts/checksums, never credentials, connection strings or raw logs.
 
-- [ ] Add and run fixture guard tests: reject wrong image/project/service/endpoint/argv and reject unknown barrier/marker/signal inputs.
+- [x] Add and run fixture guard tests: reject wrong image/project/service/endpoint/argv and reject unknown barrier/marker/signal inputs.
 - [ ] Implement fresh fixture start, normal API project creation, actual TLS row/vector/HNSW baseline, and explicit endpoint enrollment after guarded API restart with a single configured endpoint.
 - [ ] Exercise denied authorization/configuration/binding, transaction/idle/prepared-work protection, failed inspection, three real sleep/eight-connection wake cycles and exact one-start assertions.
 - [ ] Exercise API restarts while running/sleeping and transitions interrupted before stop dispatch, after smart dispatch while draining, before start dispatch and after the real start becomes ready. Compare durable state and actual process identity/count; retain review-required outcomes and recover only the disposable fixture explicitly.
@@ -49,7 +49,7 @@
 
 **Interfaces:** Use existing private SSH/remote transports, normal fixture owner login/scoped connection export and existing lifecycle routes. Capture immutable preflight/postflight hashes; do not edit live catalog lifecycle records. Preserve the six existing journals across any necessary API replacement.
 
-- [ ] Read-only inventory current image/source/configuration, endpoint/timeline, all active computes and sessions, protected data/schema hashes, retained copies, resource/monitoring settings and recovery authority/history. Refuse interruption of unrelated active workloads.
+- [x] Read-only inventory current image/source/configuration, endpoint/timeline, all active computes and sessions, protected data/schema hashes, retained copies, resource/monitoring settings and recovery authority/history. Refuse interruption of unrelated active workloads.
 - [ ] Verify the exact native engine Compose/server/three overlays and retained deployment command. Prepare the allowlist for the single reviewed target and obtain the action-time confirmation required by the approved design before enabling automatic authority.
 - [ ] Perform only a reviewed native configuration/release rollout after Linux acceptance; verify source/image selectors, actual processes, health and unchanged auxiliary services.
 - [ ] Use normal scoped owner/admin enrollment at 60 seconds for bounded protection/sleep/concurrent-wake trials; exercise disable/wake rollback; restore the retained 300-second setting and observe a full cycle within the 30-minute window. Record actual generations/start counts and PIDs; do not wake by monitoring.

@@ -85,4 +85,4 @@ An unknown, failed, or interrupted live result blocks completion. Preserve the r
 
 The selected gap reaches 100% only after immutable-image Linux acceptance, required release/deployment checks, owner-confirmed activation, bounded live observation at the retained policy, tested disable/wake rollback, exact data/security/preservation checks, session/process cleanup, scoped commits, main synchronization, and a redacted report all pass. State the active endpoint and idle window explicitly. If only the isolated trial passes and activation is pending, report the gap as still open.
 
-**Review status:** Prepared for owner review. No new fault injection, configuration change, or enrollment has been performed for this task.
+**Review status:** Owner approved native execution on 17 October. Isolated Linux acceptance exposed an unproven-controller-exit defect; the scoped repair and regression are in release acceptance. Live automatic authority remains disabled pending successful gates and the required action-time confirmation.
